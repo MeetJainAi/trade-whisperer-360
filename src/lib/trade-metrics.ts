@@ -1,4 +1,3 @@
-
 import { Tables } from '@/integrations/supabase/types';
 
 type Trade = Partial<Tables<'trades'>>;
@@ -29,7 +28,7 @@ export const calculateMetrics = (trades: Trade[]) => {
     const trades_by_time: { [key: string]: { time: string; trades: number; pnl: number } } = {};
 
     trades.sort((a: Trade, b: Trade) => new Date(a.datetime!).getTime() - new Date(b.datetime!).getTime()).forEach((trade: Trade, index: number) => {
-        const pnl = parseFloat(String(trade.pnl)) || 0;
+        const pnl = trade.pnl ?? 0;
         total_pnl += pnl;
         cumulative_pnl += pnl;
 

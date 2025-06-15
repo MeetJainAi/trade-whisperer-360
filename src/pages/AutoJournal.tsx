@@ -34,23 +34,31 @@ const cleanAndParseFloat = (value: any): number | null => {
     if (typeof value === 'number') {
         return value;
     }
-    let stringValue = String(value).trim();
+    
+    const stringValue = String(value);
 
-    // Handle parentheses for negative numbers e.g. (50.00)
-    if (stringValue.startsWith('(') && stringValue.endsWith(')')) {
-        stringValue = '-' + stringValue.substring(1, stringValue.length - 1);
-    }
+    // Determine if the number is negative based on parentheses or a minus sign
+    const isNegative = stringValue.includes('-') || (stringValue.includes('(') && stringValue.includes(')'));
     
-    // Remove characters that are not digits, decimal point, or minus sign.
-    const cleanedString = stringValue.replace(/[^0-9.-]/g, '');
-    
-    if (cleanedString === '' || cleanedString === '-' || cleanedString === '.') {
+    // Extract numbers and the decimal point only
+    const numberString = stringValue.replace(/[^0-9.]/g, '');
+
+    if (numberString === '' || numberString === '.') {
         return null;
     }
 
-    const number = parseFloat(cleanedString);
+    let number = parseFloat(numberString);
+
+    if (isNaN(number)) {
+        return null;
+    }
+
+    // Apply the negative sign if detected and the number is positive
+    if (isNegative && number > 0) {
+        number = -number;
+    }
     
-    return isNaN(number) ? null : number;
+    return number;
 };
 
 const AutoJournal = () => {
