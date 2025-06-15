@@ -34,24 +34,35 @@ serve(async (req) => {
     try {
         const { csvHeaders, csvDataSample } = await req.json();
 
-        const allTargetColumns = [...REQUIRED_COLUMNS, ...OPTIONAL_COLUMNS];
-
         const prompt = `
-You are an expert financial data analyst. Your task is to map CSV headers to a predefined set of trade attributes.
+You are an expert financial data analyst. Your task is to intelligently map CSV headers to a predefined set of trade attributes.
+You must make your best effort to map all of the REQUIRED attributes. Be flexible with the naming.
+
 The available CSV headers are: ${csvHeaders.join(', ')}.
 
 Here is a sample of the data (first 3 rows):
 ${JSON.stringify(csvDataSample, null, 2)}
 
-Please map these CSV headers to the following target attributes:
-${allTargetColumns.map(c => `- ${c.id} (${c.label})`).join('\n')}
+Please map these CSV headers to the following target attributes.
+REQUIRED attributes (You MUST find a mapping for these):
+${REQUIRED_COLUMNS.map(c => `- ${c.id} (${c.label})`).join('\n')}
 
-- The 'side' column should contain values like 'BUY' or 'SELL'.
-- The 'pnl' is the Profit and Loss. It could be named 'pnl', 'profit', 'P/L', etc.
-- The 'datetime' is the timestamp of the trade.
-- The 'qty' is the quantity or size of the trade.
+OPTIONAL attributes (map them if you find a match):
+${OPTIONAL_COLUMNS.map(c => `- ${c.id} (${c.label})`).join('\n')}
 
-Your response must be a valid JSON object only, with no other text or explanations. The keys of the JSON object must be the target attribute 'id's and the values must be the corresponding CSV header name. If a mapping for a target attribute cannot be found in the CSV headers, do not include it in the JSON object.
+Here are some hints for mapping:
+- 'datetime': This is the timestamp of the trade. Look for headers like 'Date', 'Time', 'Execution Time', 'Timestamp'.
+- 'symbol': This is the stock ticker or trading instrument. Look for 'Symbol', 'Ticker', 'Instrument'.
+- 'side': This indicates 'BUY' or 'SELL'. Look for 'Side', 'Action', 'Type', 'Transaction Type'. The data sample might contain 'buy'/'sell' or 'long'/'short'.
+- 'qty': This is the quantity or size of the trade. Look for 'Qty', 'Quantity', 'Size', 'Amount'.
+- 'price': This is the execution price per share/contract. Look for 'Price', 'Exec Price', 'Execution Price'.
+- 'pnl': This is the Profit and Loss. This is a crucial field. Look for 'P&L', 'P/L', 'Profit', 'Loss', 'Realized P&L', 'Net PnL'. The values can be positive or negative.
+
+Your response MUST be a valid JSON object only, with no other text, comments, or explanations.
+The keys of the JSON object must be the target attribute 'id's (e.g., "datetime", "symbol").
+The values must be the corresponding CSV header name from the provided list.
+
+If you are confident you've found a mapping for a header, include it. If a mapping for an OPTIONAL attribute cannot be reasonably found, you can omit it. However, you must try your best to find a mapping for all REQUIRED attributes.
 
 Example response format:
 {
