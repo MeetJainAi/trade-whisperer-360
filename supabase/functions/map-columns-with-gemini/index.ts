@@ -16,6 +16,9 @@ const REQUIRED_COLUMNS = [
 
 const OPTIONAL_COLUMNS = [
     { id: 'notes', label: 'Notes' },
+    { id: 'strategy', label: 'Strategy' },
+    { id: 'tags', label: 'Tags (comma-separated)' },
+    { id: 'image_url', label: 'Image URL' },
 ];
 
 const corsHeaders = {

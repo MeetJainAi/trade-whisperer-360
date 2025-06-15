@@ -7,19 +7,58 @@ import Papa from 'papaparse';
 import { Tables, TablesInsert } from '@/integrations/supabase/types';
 import { calculateMetrics } from '@/lib/trade-metrics';
 import UploadView from '@/components/AutoJournal/UploadView';
-import ColumnMappingView from '@/components/AutoJournal/ColumnMappingView';
 import AnalysisView from '@/components/AutoJournal/AnalysisView';
 
 type TradeSessionWithTrades = Tables<'trade_sessions'> & { trades: Tables<'trades'>[] };
 
+const REQUIRED_COLUMNS = [
+    { id: 'datetime', label: 'Date/Time' },
+    { id: 'symbol', label: 'Symbol' },
+    { id: 'side', label: 'Side (Buy/Sell)' },
+    { id: 'qty', label: 'Quantity' },
+    { id: 'price', label: 'Price' },
+    { id: 'pnl', label: 'Profit & Loss (P&L)' },
+];
+
+const OPTIONAL_COLUMNS = [
+    { id: 'notes', label: 'Notes' },
+    { id: 'strategy', label: 'Strategy' },
+    { id: 'tags', label: 'Tags (comma-separated)' },
+    { id: 'image_url', label: 'Image URL' },
+];
+
+const cleanAndParseFloat = (value: any): number | null => {
+    if (value === null || value === undefined || value === '') {
+        return null;
+    }
+    if (typeof value === 'number') {
+        return value;
+    }
+    let stringValue = String(value).trim();
+
+    // Handle parentheses for negative numbers e.g. (50.00)
+    if (stringValue.startsWith('(') && stringValue.endsWith(')')) {
+        stringValue = '-' + stringValue.substring(1, stringValue.length - 1);
+    }
+    
+    // Remove characters that are not digits, decimal point, or minus sign.
+    const cleanedString = stringValue.replace(/[^0-9.-]/g, '');
+    
+    if (cleanedString === '' || cleanedString === '-' || cleanedString === '.') {
+        return null;
+    }
+
+    const number = parseFloat(cleanedString);
+    
+    return isNaN(number) ? null : number;
+};
+
 const AutoJournal = () => {
   const { user } = useAuth();
   const [currentSession, setCurrentSession] = useState<TradeSessionWithTrades | null>(null);
-  const [uploadStep, setUploadStep] = useState<'upload' | 'map'>('upload');
   const [csvData, setCsvData] = useState<any[]>([]);
   const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
   const [rawFileId, setRawFileId] = useState<string | null>(null);
-  const [initialMapping, setInitialMapping] = useState<{ [key: string]: string }>({});
   const [isMappingLoading, setIsMappingLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
 
@@ -74,14 +113,17 @@ const AutoJournal = () => {
     },
     onSuccess: (data) => {
       setCurrentSession(data);
-      setUploadStep('upload');
       setCsvData([]);
       setCsvHeaders([]);
       setRawFileId(null);
       toast({ title: "Success!", description: "Your trade session has been analyzed." });
+      setIsMappingLoading(false);
+      setLoadingMessage('');
     },
     onError: (error: any) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
+      setIsMappingLoading(false);
+      setLoadingMessage('');
     },
   });
 
@@ -98,18 +140,82 @@ const AutoJournal = () => {
       return data.mapping;
     },
     onSuccess: (mapping) => {
-      setInitialMapping(mapping);
-      setUploadStep('map');
+      const missingColumns = REQUIRED_COLUMNS.filter(col => !mapping[col.id]);
+        if (missingColumns.length > 0) {
+            toast({
+                title: "AI Mapping Incomplete",
+                description: `AI could not map the following required fields: ${missingColumns.map(c => c.label).join(', ')}. Please check your CSV headers.`,
+                variant: "destructive"
+            });
+            setIsMappingLoading(false);
+            setLoadingMessage('');
+            return;
+        }
+
+        const mappedData = csvData.map(row => {
+            const newRow: { [key: string]: any } = {};
+            [...REQUIRED_COLUMNS, ...OPTIONAL_COLUMNS].forEach(col => {
+                if (mapping[col.id] && row[mapping[col.id]] !== undefined) {
+                    const rawValue = row[mapping[col.id]];
+                    if (['pnl', 'qty', 'price'].includes(col.id)) {
+                        newRow[col.id] = cleanAndParseFloat(rawValue);
+                    } else if (col.id === 'tags') {
+                        if (rawValue) {
+                            newRow[col.id] = String(rawValue).split(',').map(t => t.trim()).filter(Boolean);
+                        }
+                    }
+                    else {
+                        newRow[col.id] = rawValue;
+                    }
+                }
+            });
+             if (!newRow.notes) newRow.notes = '';
+            return newRow;
+        });
+        
+        const validatedData = mappedData.filter((trade, index) => {
+            const originalRow = csvData[index];
+            const isValid = trade.pnl !== null && trade.qty !== null && trade.price !== null && trade.datetime && String(trade.datetime).trim() !== '';
+            if (!isValid) {
+                console.warn("Skipping invalid trade row:", { original: originalRow, mapped: trade });
+            }
+            return isValid;
+        });
+
+        if (validatedData.length === 0) {
+            toast({
+                title: "No Valid Trades Found",
+                description: "After AI processing, no valid trades could be found. Please check your file for missing or invalid values in required columns.",
+                variant: "destructive"
+            });
+            setIsMappingLoading(false);
+            setLoadingMessage('');
+            return;
+        }
+
+        if (validatedData.length < mappedData.length) {
+            toast({
+                title: "Some trades skipped",
+                description: `${mappedData.length - validatedData.length} rows were skipped due to missing or invalid data in required columns (like P&L, Qty, Price, or Date/Time).`,
+            });
+        }
+        
+        if (!rawFileId) {
+            toast({ title: "Error", description: "Could not find the raw file reference. Please try uploading again.", variant: "destructive" });
+            setIsMappingLoading(false);
+            setLoadingMessage('');
+            return;
+        }
+      
+        setLoadingMessage('Creating analysis...');
+        createSessionMutation.mutate({ trades: validatedData, rawDataId: rawFileId });
     },
     onError: (error: any) => {
       toast({
         title: "AI Mapping Failed",
-        description: `${error.message}. We'll proceed with basic mapping. You can correct it manually.`,
+        description: `${error.message}. Please check your CSV file and try again.`,
         variant: "destructive"
       });
-      // Fallback to basic mapping if AI fails
-      setInitialMapping({});
-      setUploadStep('map');
     },
     onSettled: () => {
       setIsMappingLoading(false);
@@ -217,21 +323,6 @@ const AutoJournal = () => {
     }
   };
 
-  const handleMapComplete = (mappedData: any[]) => {
-      if (!rawFileId) {
-        toast({ title: "Error", description: "Could not find the raw file reference. Please try uploading again.", variant: "destructive" });
-        return;
-      }
-      createSessionMutation.mutate({ trades: mappedData, rawDataId: rawFileId });
-  }
-
-  const handleCancelMapping = () => {
-      setUploadStep('upload');
-      setCsvData([]);
-      setCsvHeaders([]);
-      setRawFileId(null);
-  }
-  
   const handleUseSampleData = () => {
     const sampleTrades = [
         { datetime: '2024-01-15 09:30:00', symbol: 'AAPL', side: 'BUY', qty: 100, price: 150.25, pnl: 45.00, notes: 'Breakout' },
@@ -246,28 +337,13 @@ const AutoJournal = () => {
 
   const handleUploadNew = () => {
     setCurrentSession(null);
-    setUploadStep('upload');
     setCsvData([]);
     setCsvHeaders([]);
-    setInitialMapping({});
     setRawFileId(null);
   }
 
   if (currentSession) {
     return <AnalysisView currentSession={currentSession} onUploadNew={handleUploadNew} />;
-  }
-
-  if (uploadStep === 'map') {
-    return (
-      <ColumnMappingView
-        csvHeaders={csvHeaders}
-        csvData={csvData}
-        onMapComplete={handleMapComplete}
-        onCancel={handleCancelMapping}
-        isProcessing={createSessionMutation.isPending}
-        initialMapping={initialMapping}
-      />
-    );
   }
 
   return (
