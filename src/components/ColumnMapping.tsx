@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
@@ -28,6 +27,33 @@ interface ColumnMappingProps {
     isProcessing: boolean;
     initialMapping?: { [key: string]: string };
 }
+
+const cleanAndParseFloat = (value: any): number | null => {
+    if (value === null || value === undefined || value === '') {
+        return null;
+    }
+    if (typeof value === 'number') {
+        return value;
+    }
+    let stringValue = String(value).trim();
+
+    // Handle parentheses for negative numbers e.g. (50.00)
+    if (stringValue.startsWith('(') && stringValue.endsWith(')')) {
+        stringValue = '-' + stringValue.substring(1, stringValue.length - 1);
+    }
+    
+    // Remove characters that are not digits, decimal point, or minus sign.
+    // This is a bit aggressive but handles many formats like "$1,234.56"
+    const cleanedString = stringValue.replace(/[^0-9.-]/g, '');
+    
+    if (cleanedString === '' || cleanedString === '-' || cleanedString === '.') {
+        return null;
+    }
+
+    const number = parseFloat(cleanedString);
+    
+    return isNaN(number) ? null : number;
+};
 
 const ColumnMapping = ({ csvHeaders, csvData, onMapComplete, onCancel, isProcessing, initialMapping }: ColumnMappingProps) => {
     const [mapping, setMapping] = useState<{ [key: string]: string }>({});
@@ -77,14 +103,44 @@ const ColumnMapping = ({ csvHeaders, csvData, onMapComplete, onCancel, isProcess
             const newRow: { [key: string]: any } = {};
             [...REQUIRED_COLUMNS, ...OPTIONAL_COLUMNS].forEach(col => {
                 if (mapping[col.id] && row[mapping[col.id]] !== undefined) {
-                    newRow[col.id] = row[mapping[col.id]];
+                    const rawValue = row[mapping[col.id]];
+                    if (['pnl', 'qty', 'price'].includes(col.id)) {
+                        newRow[col.id] = cleanAndParseFloat(rawValue);
+                    } else {
+                        newRow[col.id] = rawValue;
+                    }
                 }
             });
              if (!newRow.notes) newRow.notes = '';
             return newRow;
         });
         
-        onMapComplete(mappedData);
+        const validatedData = mappedData.filter((trade, index) => {
+            const originalRow = csvData[index];
+            const isValid = trade.pnl !== null && trade.qty !== null && trade.price !== null && trade.datetime && String(trade.datetime).trim() !== '';
+            if (!isValid) {
+                console.warn("Skipping invalid trade row:", { original: originalRow, mapped: trade });
+            }
+            return isValid;
+        });
+
+        if (validatedData.length === 0) {
+            toast({
+                title: "No Valid Trades Found",
+                description: "After processing, no valid trades could be found. Please check your file for missing or invalid values in required columns.",
+                variant: "destructive"
+            });
+            return;
+        }
+
+        if (validatedData.length < mappedData.length) {
+            toast({
+                title: "Some trades skipped",
+                description: `${mappedData.length - validatedData.length} rows were skipped due to missing or invalid data in required columns (like P&L, Qty, Price, or Date/Time).`,
+            });
+        }
+        
+        onMapComplete(validatedData);
     };
 
     return (
