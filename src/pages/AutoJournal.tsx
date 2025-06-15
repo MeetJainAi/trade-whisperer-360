@@ -1,8 +1,7 @@
-
 import { useState } from 'react';
 import { useAuth } from '@/components/AuthProvider';
 import { supabase } from '@/integrations/supabase/client';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/components/ui/use-toast';
 import Papa from 'papaparse';
 import { Tables, TablesInsert } from '@/integrations/supabase/types';
@@ -64,12 +63,35 @@ const cleanAndParseFloat = (value: any): number | null => {
 
 const AutoJournal = () => {
   const { user } = useAuth();
-  const [currentSession, setCurrentSession] = useState<TradeSessionWithTrades | null>(null);
+  const queryClient = useQueryClient();
+  const [showUploadView, setShowUploadView] = useState(false);
   const [csvData, setCsvData] = useState<any[]>([]);
   const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
   const [rawFileId, setRawFileId] = useState<string | null>(null);
   const [isMappingLoading, setIsMappingLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
+
+  const { data: latestSession, isLoading: isLatestSessionLoading } = useQuery({
+    queryKey: ['latest-trade-session', user?.id],
+    queryFn: async () => {
+        if (!user) return null;
+
+        const { data, error } = await supabase
+            .from('trade_sessions')
+            .select('*, trades(*)')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+        if (error) {
+            console.error('Error fetching latest session:', error);
+            throw error;
+        }
+        
+        return data as TradeSessionWithTrades | null;
+    },
+    enabled: !!user,
+  });
 
   const createSessionMutation = useMutation({
     mutationFn: async ({ trades, rawDataId }: { trades: any[], rawDataId?: string }) => {
@@ -124,7 +146,8 @@ const AutoJournal = () => {
       return { ...newSession, trades: tradesData } as TradeSessionWithTrades;
     },
     onSuccess: (data) => {
-      setCurrentSession(data);
+      setShowUploadView(false);
+      queryClient.invalidateQueries({ queryKey: ['latest-trade-session', user?.id] });
       setCsvData([]);
       setCsvHeaders([]);
       setRawFileId(null);
@@ -344,21 +367,42 @@ const AutoJournal = () => {
   };
 
   const handleUploadNew = () => {
-    setCurrentSession(null);
+    setShowUploadView(true);
+    
+    createSessionMutation.reset();
+    mapColumnsMutation.reset();
+    validateCsvMutation.reset();
+    saveRawDataMutation.reset();
+
     setCsvData([]);
     setCsvHeaders([]);
     setRawFileId(null);
+    setIsMappingLoading(false);
+    setLoadingMessage('');
   }
 
-  if (currentSession) {
-    return <AnalysisView currentSession={currentSession} onUploadNew={handleUploadNew} />;
+  const sessionToShow = createSessionMutation.data || latestSession;
+  const isProcessing = isMappingLoading || createSessionMutation.isPending || saveRawDataMutation.isPending || validateCsvMutation.isPending || mapColumnsMutation.isPending;
+
+  if (isLatestSessionLoading) {
+    return (
+        <div className="flex items-center justify-center h-screen bg-slate-50">
+            <div className="text-center">
+                <p className="text-lg text-slate-600">Loading your trading journal...</p>
+            </div>
+        </div>
+    );
+  }
+
+  if (sessionToShow && !showUploadView) {
+    return <AnalysisView currentSession={sessionToShow} onUploadNew={handleUploadNew} />;
   }
 
   return (
     <UploadView
       handleFileUpload={handleFileUpload}
       handleUseSampleData={handleUseSampleData}
-      isLoading={isMappingLoading || createSessionMutation.isPending || saveRawDataMutation.isPending}
+      isLoading={isProcessing}
       statusText={
         saveRawDataMutation.isPending ? 'Saving raw file...' :
         isMappingLoading ? loadingMessage :
