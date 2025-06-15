@@ -1,0 +1,126 @@
+
+import { useState } from 'react';
+import Papa from 'papaparse';
+import { supabase } from '@/integrations/supabase/client';
+import { toast } from '@/components/ui/use-toast';
+import { Tables, TablesInsert } from '@/integrations/supabase/types';
+import { useAuth } from '@/components/AuthProvider';
+import { calculateMetrics } from '@/lib/trade-metrics';
+
+type Trade = Tables<'trades'>;
+type Journal = Tables<'journals'>;
+
+// A helper to safely parse numbers from string values
+const safeParseFloat = (value: any): number => {
+    if (typeof value === 'number') return value;
+    if (typeof value === 'string') {
+        const parsed = parseFloat(value.replace(/[^0-9.-]+/g,""));
+        return isNaN(parsed) ? 0 : parsed;
+    }
+    return 0;
+}
+
+export const useProcessCsv = (journal: Journal) => {
+    const { user } = useAuth();
+    const [loadingMessage, setLoadingMessage] = useState('');
+
+    const processCsv = async (file: File) => {
+        if (!user || !journal.id) {
+            toast({ title: "Error", description: "You must be logged in and have a journal selected.", variant: "destructive" });
+            return;
+        }
+
+        setLoadingMessage('Parsing CSV file...');
+
+        Papa.parse(file, {
+            header: true,
+            skipEmptyLines: true,
+            complete: async (results) => {
+                try {
+                    setLoadingMessage('Validating CSV data...');
+                    
+                    if (results.errors.length > 0) {
+                        console.error("CSV parsing errors:", results.errors);
+                        throw new Error(`CSV parsing error on row ${results.errors[0].row}: ${results.errors[0].message}`);
+                    }
+
+                    const tradesToInsert: Omit<TablesInsert<'trades'>, 'user_id' | 'journal_id' | 'session_id'>[] = (results.data as any[])
+                        .map((row: any) => {
+                            const datetime = row.datetime || row.Timestamp || row.Time;
+                            if (!datetime) return null; // Skip rows without a datetime
+
+                            return {
+                                datetime: new Date(datetime).toISOString(),
+                                symbol: row.symbol || row.Symbol,
+                                side: row.side || row.Side,
+                                qty: safeParseFloat(row.qty || row.Qty || row.Quantity),
+                                price: safeParseFloat(row.price || row.Price),
+                                pnl: safeParseFloat(row.pnl || row.PnL || row['P/L'] || row.NetPL),
+                                notes: row.notes || row.Notes || '',
+                            };
+                        })
+                        .filter(Boolean) as Omit<TablesInsert<'trades'>, 'user_id' | 'journal_id' | 'session_id'>[];
+
+                    if (tradesToInsert.length === 0) {
+                        throw new Error("No valid trades found in the CSV file. Please check column names (e.g., datetime, symbol, pnl).");
+                    }
+
+                    setLoadingMessage('Calculating trade metrics...');
+                    const metrics = calculateMetrics(tradesToInsert as Trade[]);
+
+                    setLoadingMessage('Creating new trade session...');
+                    const sessionData = {
+                        journal_id: journal.id,
+                        user_id: user.id,
+                        total_trades: metrics.total_trades,
+                        total_pnl: metrics.total_pnl,
+                        win_rate: metrics.win_rate,
+                        profit_factor: metrics.profit_factor,
+                        max_drawdown: metrics.max_drawdown,
+                        avg_win: metrics.avg_win,
+                        avg_loss: metrics.avg_loss,
+                        equity_curve: metrics.equity_curve,
+                        time_data: metrics.time_data,
+                        trades_by_day: metrics.trades_by_day,
+                        trades_by_symbol: metrics.trades_by_symbol,
+                    };
+
+                    const { data: newSession, error: sessionError } = await supabase
+                        .from('trade_sessions')
+                        .insert(sessionData)
+                        .select()
+                        .single();
+
+                    if (sessionError) throw sessionError;
+
+                    setLoadingMessage(`Inserting ${tradesToInsert.length} trades...`);
+                    const tradesData = tradesToInsert.map(trade => ({
+                        ...trade,
+                        session_id: newSession.id,
+                        user_id: user.id,
+                        journal_id: journal.id,
+                    }));
+
+                    const { error: tradesError } = await supabase.from('trades').insert(tradesData);
+                    if (tradesError) throw tradesError;
+
+                    toast({ title: "Success!", description: "CSV data uploaded and analyzed." });
+                    setLoadingMessage('');
+                    window.location.reload();
+                } catch (error: any) {
+                    console.error('Error processing CSV:', error);
+                    toast({ title: "Upload Error", description: error.message, variant: "destructive" });
+                    setLoadingMessage('');
+                }
+            },
+            error: (error: any) => {
+                console.error('Error parsing CSV:', error);
+                toast({ title: "CSV Parsing Error", description: error.message, variant: "destructive" });
+                setLoadingMessage('');
+            }
+        });
+    };
+
+    return { processCsv, loadingMessage };
+};
+

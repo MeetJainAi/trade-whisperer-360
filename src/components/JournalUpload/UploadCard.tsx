@@ -4,13 +4,21 @@ import { Tables } from '@/integrations/supabase/types';
 import { useCreateSampleData } from '@/hooks/useCreateSampleData';
 import UploadPlaceholder from './UploadPlaceholder';
 import SampleDataButton from './SampleDataButton';
+import { useProcessCsv } from '@/hooks/useProcessCsv';
 
 interface UploadCardProps {
   journal: Tables<'journals'>;
 }
 
 const UploadCard = ({ journal }: UploadCardProps) => {
-  const { createSampleData, loadingMessage } = useCreateSampleData(journal);
+  const { createSampleData, loadingMessage: sampleDataLoadingMessage } = useCreateSampleData(journal);
+  const { processCsv, loadingMessage: csvLoadingMessage } = useProcessCsv(journal);
+
+  const handleFileUpload = (file: File) => {
+    processCsv(file);
+  };
+  
+  const loadingMessage = sampleDataLoadingMessage || csvLoadingMessage;
 
   return (
     <Card className="w-full max-w-lg">
@@ -19,7 +27,7 @@ const UploadCard = ({ journal }: UploadCardProps) => {
         <CardDescription>Upload a CSV file to analyze your trades or try sample data.</CardDescription>
       </CardHeader>
       <CardContent>
-        <UploadPlaceholder loadingMessage={loadingMessage} />
+        <UploadPlaceholder onFileUpload={handleFileUpload} loadingMessage={loadingMessage} />
         <SampleDataButton onClick={createSampleData} loadingMessage={loadingMessage} />
       </CardContent>
     </Card>
@@ -27,3 +35,4 @@ const UploadCard = ({ journal }: UploadCardProps) => {
 };
 
 export default UploadCard;
+
