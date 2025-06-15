@@ -1,3 +1,4 @@
+
 import { useState } from 'react';
 import { useAuth } from '@/components/AuthProvider';
 import { supabase } from '@/integrations/supabase/client';
@@ -93,6 +94,9 @@ const AutoJournal = () => {
         max_drawdown: metrics.max_drawdown,
         equity_curve: metrics.equity_curve as any,
         time_data: metrics.time_data as any,
+        profit_factor: metrics.profit_factor,
+        trades_by_day: metrics.trades_by_day as any,
+        trades_by_symbol: metrics.trades_by_symbol as any,
         ai_strengths: insights.ai_strengths,
         ai_mistakes: insights.ai_mistakes,
         ai_fixes: insights.ai_fixes,
@@ -225,10 +229,6 @@ const AutoJournal = () => {
         variant: "destructive"
       });
     },
-    onSettled: () => {
-      setIsMappingLoading(false);
-      setLoadingMessage('');
-    }
   });
 
   const validateCsvMutation = useMutation({

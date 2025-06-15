@@ -1,3 +1,4 @@
+
 import { Tables } from '@/integrations/supabase/types';
 
 type Trade = Partial<Tables<'trades'>>;
@@ -14,6 +15,9 @@ export const calculateMetrics = (trades: Trade[]) => {
             max_drawdown: 0,
             equity_curve: [],
             time_data: [],
+            profit_factor: 0,
+            trades_by_day: [],
+            trades_by_symbol: [],
         };
     }
 
@@ -26,6 +30,8 @@ export const calculateMetrics = (trades: Trade[]) => {
     let max_drawdown = 0;
 
     const trades_by_time: { [key: string]: { time: string; trades: number; pnl: number } } = {};
+    const trades_by_day: { [key: string]: { day: string; trades: number; pnl: number } } = {};
+    const trades_by_symbol: { [key: string]: { symbol: string; trades: number; pnl: number } } = {};
 
     trades.sort((a: Trade, b: Trade) => new Date(a.datetime!).getTime() - new Date(b.datetime!).getTime()).forEach((trade: Trade, index: number) => {
         const pnl = trade.pnl ?? 0;
@@ -49,19 +55,47 @@ export const calculateMetrics = (trades: Trade[]) => {
         }
 
         const date = new Date(trade.datetime!);
+
+        // Time data
         const time_key = `${date.getHours()}:${String(date.getMinutes()).padStart(2, '0')}`;
         if (!trades_by_time[time_key]) {
             trades_by_time[time_key] = { time: time_key, trades: 0, pnl: 0 };
         }
         trades_by_time[time_key].trades += 1;
         trades_by_time[time_key].pnl += pnl;
+
+        // Day of week data
+        const day_key = date.toLocaleString('en-US', { weekday: 'long' });
+        if (!trades_by_day[day_key]) {
+            trades_by_day[day_key] = { day: day_key, trades: 0, pnl: 0 };
+        }
+        trades_by_day[day_key].trades += 1;
+        trades_by_day[day_key].pnl += pnl;
+        
+        // Symbol data
+        const symbol_key = trade.symbol;
+        if (symbol_key) {
+            if (!trades_by_symbol[symbol_key]) {
+                trades_by_symbol[symbol_key] = { symbol: symbol_key, trades: 0, pnl: 0 };
+            }
+            trades_by_symbol[symbol_key].trades += 1;
+            trades_by_symbol[symbol_key].pnl += pnl;
+        }
     });
 
     const win_rate = total_trades > 0 ? (winning_trades_pnl.length / total_trades) * 100 : 0;
     const avg_win = winning_trades_pnl.length > 0 ? winning_trades_pnl.reduce((a, b) => a + b, 0) / winning_trades_pnl.length : 0;
     const avg_loss = losing_trades_pnl.length > 0 ? losing_trades_pnl.reduce((a, b) => a + b, 0) / losing_trades_pnl.length : 0;
 
+    const gross_profit = winning_trades_pnl.reduce((a,b) => a + b, 0);
+    const gross_loss = Math.abs(losing_trades_pnl.reduce((a,b) => a + b, 0));
+    const profit_factor = gross_loss > 0 ? gross_profit / gross_loss : (gross_profit > 0 ? 9999 : 0);
+
     const time_data = Object.values(trades_by_time).sort((a,b) => a.time.localeCompare(b.time));
+    
+    const days_order = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const day_data = Object.values(trades_by_day).sort((a,b) => days_order.indexOf(a.day) - days_order.indexOf(b.day));
+    const symbol_data = Object.values(trades_by_symbol).sort((a,b) => a.symbol.localeCompare(b.symbol));
 
     return {
         total_pnl,
@@ -72,5 +106,8 @@ export const calculateMetrics = (trades: Trade[]) => {
         max_drawdown,
         equity_curve: equity_curve_data,
         time_data,
+        profit_factor,
+        trades_by_day: day_data,
+        trades_by_symbol: symbol_data,
     };
 }

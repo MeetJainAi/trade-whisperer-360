@@ -48,10 +48,13 @@ export type Database = {
           equity_curve: Json | null
           id: string
           max_drawdown: number | null
+          profit_factor: number | null
           raw_data_id: string | null
           time_data: Json | null
           total_pnl: number | null
           total_trades: number | null
+          trades_by_day: Json | null
+          trades_by_symbol: Json | null
           user_id: string
           win_rate: number | null
         }
@@ -66,10 +69,13 @@ export type Database = {
           equity_curve?: Json | null
           id?: string
           max_drawdown?: number | null
+          profit_factor?: number | null
           raw_data_id?: string | null
           time_data?: Json | null
           total_pnl?: number | null
           total_trades?: number | null
+          trades_by_day?: Json | null
+          trades_by_symbol?: Json | null
           user_id: string
           win_rate?: number | null
         }
@@ -84,10 +90,13 @@ export type Database = {
           equity_curve?: Json | null
           id?: string
           max_drawdown?: number | null
+          profit_factor?: number | null
           raw_data_id?: string | null
           time_data?: Json | null
           total_pnl?: number | null
           total_trades?: number | null
+          trades_by_day?: Json | null
+          trades_by_symbol?: Json | null
           user_id?: string
           win_rate?: number | null
         }

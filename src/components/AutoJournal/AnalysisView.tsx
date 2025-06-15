@@ -1,8 +1,8 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { BarChart3, ArrowLeft, TrendingUp, TrendingDown, Percent, Clock, BookOpen } from 'lucide-react';
+import { BarChart3, ArrowLeft, TrendingUp, TrendingDown, Percent, Clock, BookOpen, Scale, CalendarDays, Tags } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, Cell } from 'recharts';
 import { Tables } from '@/integrations/supabase/types';
 import TradesLogTable from './TradesLogTable';
 
@@ -96,6 +96,54 @@ const AnalysisView = ({ currentSession, onUploadNew }: AnalysisViewProps) => {
               </div>
             </CardContent>
           </Card>
+          
+          <Card className="border-0 shadow-lg">
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-slate-600 mb-1">Profit Factor</p>
+                  <p className="text-2xl font-bold text-slate-800">
+                    {currentSession.profit_factor && currentSession.profit_factor >= 9999 ? '∞' : currentSession.profit_factor?.toFixed(2)}
+                  </p>
+                </div>
+                <div className="w-12 h-12 rounded-xl bg-amber-100 flex items-center justify-center">
+                  <Scale className="w-6 h-6 text-amber-600" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          
+          <Card className="border-0 shadow-lg">
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-slate-600 mb-1">Avg. Win</p>
+                  <p className="text-2xl font-bold text-green-600">
+                    +${currentSession.avg_win?.toFixed(2)}
+                  </p>
+                </div>
+                <div className="w-12 h-12 rounded-xl bg-green-100 flex items-center justify-center">
+                    <TrendingUp className="w-6 h-6 text-green-600" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          
+          <Card className="border-0 shadow-lg">
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-slate-600 mb-1">Avg. Loss</p>
+                  <p className="text-2xl font-bold text-red-600">
+                    -${Math.abs(currentSession.avg_loss || 0).toFixed(2)}
+                  </p>
+                </div>
+                 <div className="w-12 h-12 rounded-xl bg-red-100 flex items-center justify-center">
+                  <TrendingDown className="w-6 h-6 text-red-600" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
 
           <Card className="border-0 shadow-lg">
             <CardContent className="pt-6">
@@ -116,27 +164,6 @@ const AnalysisView = ({ currentSession, onUploadNew }: AnalysisViewProps) => {
           <Card className="border-0 shadow-lg">
             <CardHeader>
               <CardTitle className="flex items-center space-x-2">
-                <Clock className="w-5 h-5 text-blue-600" />
-                <span>Trades by Time</span>
-              </CardTitle>
-              <CardDescription>Your trading activity throughout the day</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={currentSession.time_data as any[]}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="time" />
-                  <YAxis />
-                  <Tooltip />
-                  <Bar dataKey="trades" fill="#3b82f6" />
-                </BarChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
-
-          <Card className="border-0 shadow-lg">
-            <CardHeader>
-              <CardTitle className="flex items-center space-x-2">
                 <TrendingUp className="w-5 h-5 text-green-600" />
                 <span>Equity Curve</span>
               </CardTitle>
@@ -148,12 +175,88 @@ const AnalysisView = ({ currentSession, onUploadNew }: AnalysisViewProps) => {
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="trade" />
                   <YAxis />
-                  <Tooltip />
-                  <Line type="monotone" dataKey="cumulative" stroke="#10b981" strokeWidth={3} />
+                  <Tooltip formatter={(value: number) => `$${value.toFixed(2)}`} />
+                  <Line type="monotone" dataKey="cumulative" stroke="#10b981" strokeWidth={3} dot={false} />
                 </LineChart>
               </ResponsiveContainer>
             </CardContent>
           </Card>
+          <Card className="border-0 shadow-lg">
+            <CardHeader>
+              <CardTitle className="flex items-center space-x-2">
+                <Clock className="w-5 h-5 text-blue-600" />
+                <span>P&L by Time</span>
+              </CardTitle>
+              <CardDescription>Your P&L activity throughout the day</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={currentSession.time_data as any[]}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="time" />
+                  <YAxis />
+                  <Tooltip formatter={(value: number) => `$${value.toFixed(2)}`}/>
+                  <Bar dataKey="pnl">
+                    {(currentSession.time_data as any[]).map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.pnl >= 0 ? '#3b82f6' : '#ef4444'} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        </div>
+
+        <div className="grid lg:grid-cols-2 gap-8 mb-8">
+           <Card className="border-0 shadow-lg">
+            <CardHeader>
+                <CardTitle className="flex items-center space-x-2">
+                <CalendarDays className="w-5 h-5 text-orange-600" />
+                <span>P&L by Day</span>
+                </CardTitle>
+                <CardDescription>Your performance across the week</CardDescription>
+            </CardHeader>
+            <CardContent>
+                <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={currentSession.trades_by_day as any[]}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="day" />
+                    <YAxis />
+                    <Tooltip formatter={(value: number) => `$${value.toFixed(2)}`} />
+                    <Bar dataKey="pnl">
+                        {(currentSession.trades_by_day as any[]).map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={entry.pnl >= 0 ? '#f97316' : '#ef4444'} />
+                        ))}
+                    </Bar>
+                </BarChart>
+                </ResponsiveContainer>
+            </CardContent>
+            </Card>
+
+            <Card className="border-0 shadow-lg">
+            <CardHeader>
+                <CardTitle className="flex items-center space-x-2">
+                <Tags className="w-5 h-5 text-indigo-600" />
+                <span>P&L by Symbol</span>
+                </CardTitle>
+                <CardDescription>Your performance across different symbols</CardDescription>
+            </CardHeader>
+            <CardContent>
+                <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={currentSession.trades_by_symbol as any[]}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="symbol" />
+                    <YAxis />
+                    <Tooltip formatter={(value: number) => `$${value.toFixed(2)}`} />
+                    <Bar dataKey="pnl">
+                        {(currentSession.trades_by_symbol as any[]).map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={entry.pnl >= 0 ? '#4f46e5' : '#ef4444'} />
+                        ))}
+                    </Bar>
+                </BarChart>
+                </ResponsiveContainer>
+            </CardContent>
+            </Card>
         </div>
 
         <Card className="border-0 shadow-lg">
