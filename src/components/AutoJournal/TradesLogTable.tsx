@@ -49,8 +49,8 @@ const TradesLogTable = ({ trades }: TradesLogTableProps) => {
             </TableCell>
             <TableCell>{(trade as any).strategy}</TableCell>
             <TableCell className="max-w-[200px]">
-              {(trade as any).tags?.map((tag: string) => (
-                <Badge key={tag} variant="outline" className="mr-1 mb-1 font-normal">{tag}</Badge>
+              {(trade as any).tags?.map((tag: string, index: number) => (
+                <Badge key={`${trade.id}-${tag}-${index}`} variant="outline" className="mr-1 mb-1 font-normal">{tag}</Badge>
               ))}
             </TableCell>
             <TableCell className="text-slate-600 max-w-[250px] truncate">{trade.notes}</TableCell>

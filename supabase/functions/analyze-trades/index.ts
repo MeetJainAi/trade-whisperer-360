@@ -1,76 +1,98 @@
 
-import { serve } from 'https://deno.land/std@0.177.0/http/server.ts'
+import 'https://deno.land/x/xhr@0.1.0/mod.ts';
+import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 
-// This is a mock implementation.
-// In a real-world scenario, you would call an AI service like OpenAI here.
-function generateInsights(trades: any[]) {
-  const winningTrades = trades.filter(t => t.pnl > 0);
-  const losingTrades = trades.filter(t => t.pnl <= 0);
+const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
+const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${GEMINI_API_KEY}`;
 
-  const strengths = [];
-  if (winningTrades.length > losingTrades.length) {
-    strengths.push('Excellent win/loss ratio. You are selective with your trades.');
-    strengths.push('Strong performance in the morning session.');
-  } else {
-    strengths.push('You are good at cutting losses quickly.');
-  }
-
-  const mistakes = [];
-  if (losingTrades.length > 0) {
-    mistakes.push('Tendency to overtrade during midday chop.');
-    mistakes.push('Holding onto losing trades for too long.');
-  } else {
-    mistakes.push('You seem to be avoiding risky setups, which is good.');
-  }
-
-  const fixes = [];
-  fixes.push('Implement a hard stop for the number of trades per day.');
-  fixes.push('Take a 15-minute break after two consecutive losses.');
-  fixes.push('Review your pre-trade checklist for every setup.');
-  
-  const keyInsight = 'Your data suggests a strong edge in trend-following strategies during the first two hours of the market open. Focusing your capital during this period could yield better results.';
-
-  return {
-    ai_strengths: strengths,
-    ai_mistakes: mistakes,
-    ai_fixes: fixes,
-    ai_key_insight: keyInsight,
-  };
-}
-
+const corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+};
 
 serve(async (req) => {
-  // This is needed to invoke the function from a browser.
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-    } })
-  }
-
-  try {
-    const { trades } = await req.json();
-
-    if (!trades || !Array.isArray(trades)) {
-        return new Response(JSON.stringify({ error: 'Trades data is required and should be an array.' }), {
-            status: 400,
-            headers: { 'Content-Type': 'application/json' },
-        });
+    if (req.method === 'OPTIONS') {
+        return new Response('ok', { headers: corsHeaders });
     }
 
-    const insights = generateInsights(trades);
+    try {
+        const { trades } = await req.json();
 
-    return new Response(JSON.stringify(insights), {
-      headers: { 
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
-       },
-      status: 200,
-    });
-  } catch (error) {
-    return new Response(JSON.stringify({ error: error.message }), {
-      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-      status: 500,
-    });
-  }
-})
+        if (!trades || !Array.isArray(trades) || trades.length === 0) {
+            return new Response(JSON.stringify({ error: 'Trades data is required and should be a non-empty array.' }), {
+                status: 400,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+        }
+
+        const tradesForAnalysis = trades.slice(0, 100);
+
+        const prompt = `
+You are a professional trading coach and data analyst. You are analyzing a trader's journal.
+Based on the following trades, provide an analysis of their performance.
+
+Trades data (up to 100 trades):
+${JSON.stringify(tradesForAnalysis, (key, value) => (key === 'id' || key === 'user_id' || key === 'session_id' || key === 'created_at') ? undefined : value, 2)}
+
+Please provide your analysis in a valid JSON object only, with no other text or explanations.
+The JSON object must have the following structure:
+{
+  "ai_strengths": ["string", "string", "string"],
+  "ai_mistakes": ["string", "string", "string"],
+  "ai_fixes": ["string", "string", "string"],
+  "ai_key_insight": "string"
+}
+
+Guidelines:
+- ai_strengths: Identify 2-3 specific, positive patterns.
+- ai_mistakes: Identify 2-3 specific, common mistakes.
+- ai_fixes: Suggest 3 concrete, actionable steps for improvement.
+- ai_key_insight: Provide one overarching, insightful summary.
+`;
+
+        const response = await fetch(GEMINI_API_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: [{ parts: [{ text: prompt }] }],
+                generationConfig: {
+                    response_mime_type: "application/json",
+                }
+            }),
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`Gemini API error in analyze-trades: ${response.status} ${errorText}`);
+            throw new Error(`AI analysis failed due to an API error.`);
+        }
+
+        const geminiResponse = await response.json();
+        
+        if (!geminiResponse.candidates?.[0]?.content?.parts?.[0]?.text) {
+          console.error('Unexpected Gemini response format in analyze-trades:', geminiResponse);
+          throw new Error('Failed to parse insights from AI due to unexpected response format.');
+        }
+
+        const insightsText = geminiResponse.candidates[0].content.parts[0].text;
+        const insights = JSON.parse(insightsText);
+        
+        if (!insights.ai_strengths || !insights.ai_mistakes || !insights.ai_fixes || !insights.ai_key_insight) {
+            console.error('Parsed insights object is missing required keys:', insights);
+            throw new Error('AI analysis result is incomplete.');
+        }
+
+        return new Response(JSON.stringify(insights), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            status: 200,
+        });
+
+    } catch (error) {
+        console.error('Error in analyze-trades function:', error);
+        const message = error.message.includes('API') || error.message.includes('AI') ? error.message : 'An internal error occurred during trade analysis.';
+        return new Response(JSON.stringify({ error: message }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            status: 500,
+        });
+    }
+});
