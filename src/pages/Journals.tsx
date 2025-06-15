@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useAuth } from '@/components/AuthProvider';
 import { supabase } from '@/integrations/supabase/client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -154,7 +155,11 @@ const Journals = () => {
                             <TableBody>
                                 {journals.map((journal) => (
                                     <TableRow key={journal.id}>
-                                        <TableCell className="font-medium">{journal.name}</TableCell>
+                                        <TableCell className="font-medium">
+                                            <Link to={`/journals/${journal.id}`} className="hover:underline">
+                                                {journal.name}
+                                            </Link>
+                                        </TableCell>
                                         <TableCell>{journal.prop_firm || '-'}</TableCell>
                                         <TableCell>{journal.account_size ? `$${journal.account_size.toLocaleString()}`: '-'}</TableCell>
                                         <TableCell>{journal.broker || '-'}</TableCell>
