@@ -97,6 +97,7 @@ const AutoJournal = () => {
   const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
   const [initialMapping, setInitialMapping] = useState<{ [key: string]: string }>({});
   const [isMappingLoading, setIsMappingLoading] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState('');
 
   const createSessionMutation = useMutation({
     mutationFn: async (trades: any[]) => {
@@ -160,6 +161,7 @@ const AutoJournal = () => {
 
   const mapColumnsMutation = useMutation({
     mutationFn: async ({ csvHeaders, csvDataSample }: { csvHeaders: string[]; csvDataSample: any[] }) => {
+      setLoadingMessage('Asking AI to map columns...');
       const { data, error } = await supabase.functions.invoke('map-columns-with-gemini', {
         body: { csvHeaders, csvDataSample },
       });
@@ -185,13 +187,47 @@ const AutoJournal = () => {
     },
     onSettled: () => {
       setIsMappingLoading(false);
+      setLoadingMessage('');
     }
+  });
+
+  const validateCsvMutation = useMutation({
+    mutationFn: async ({ csvHeaders, csvDataSample }: { csvHeaders: string[]; csvDataSample: any[] }) => {
+      setLoadingMessage('Verifying file content with AI...');
+      const { data, error } = await supabase.functions.invoke('validate-csv-content', {
+        body: { csvHeaders, csvDataSample },
+      });
+
+      if (error) {
+        console.warn(`AI validation failed: ${error.message}. Proceeding to mapping anyway.`);
+        return { is_trading_related: true };
+      }
+      
+      if (!data.is_trading_related) {
+        throw new Error("The uploaded file does not appear to contain trading data. Please upload a valid trades CSV.");
+      }
+
+      return data;
+    },
+    onSuccess: (_, variables) => {
+        mapColumnsMutation.mutate(variables);
+    },
+    onError: (error: any) => {
+        toast({
+            title: "Invalid File",
+            description: error.message,
+            variant: "destructive"
+        });
+        setIsMappingLoading(false);
+        setLoadingMessage('');
+    },
   });
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
       setIsMappingLoading(true);
+      setLoadingMessage('Parsing CSV file...');
       Papa.parse(file, {
         header: true,
         skipEmptyLines: true,
@@ -199,11 +235,13 @@ const AutoJournal = () => {
           if (!results.meta.fields || results.meta.fields.length === 0) {
             toast({ title: "Invalid CSV", description: "Could not read headers from the file.", variant: "destructive" });
             setIsMappingLoading(false);
+            setLoadingMessage('');
             return;
           }
           if (results.data.length === 0) {
             toast({ title: "Empty File", description: "No trade data found in the CSV.", variant: "destructive" });
             setIsMappingLoading(false);
+            setLoadingMessage('');
             return;
           }
           const headers = results.meta.fields;
@@ -212,11 +250,12 @@ const AutoJournal = () => {
           setCsvHeaders(headers);
           
           const sampleData = data.slice(0, 3);
-          mapColumnsMutation.mutate({ csvHeaders: headers, csvDataSample: sampleData });
+          validateCsvMutation.mutate({ csvHeaders: headers, csvDataSample: sampleData });
         },
         error: (error: any) => {
             toast({ title: "CSV Parsing Error", description: error.message, variant: "destructive" });
             setIsMappingLoading(false);
+            setLoadingMessage('');
         }
       });
     }
@@ -305,7 +344,7 @@ const AutoJournal = () => {
           <Card className="border-0 shadow-lg">
             <CardHeader className="text-center">
               <div className="w-20 h-20 rounded-full bg-gradient-to-r from-green-100 to-blue-100 flex items-center justify-center mx-auto mb-4">
-                <Upload className="w-10 h-10 text-green-600" />
+                <Upload className="w-12 h-12 text-green-600" />
               </div>
               <CardTitle className="text-2xl">Upload Your Trade Data</CardTitle>
               <CardDescription className="max-w-2xl mx-auto">
@@ -331,7 +370,7 @@ const AutoJournal = () => {
                     <Upload className="w-12 h-12 text-slate-400 mx-auto mb-4" />
                   )}
                   <p className="text-lg font-medium text-slate-700 mb-2">
-                    {isMappingLoading ? 'Analyzing columns with AI...' : createSessionMutation.isPending ? 'Processing...' : 'Choose CSV file'}
+                    {isMappingLoading ? loadingMessage : createSessionMutation.isPending ? 'Processing...' : 'Choose CSV file'}
                   </p>
                   <p className="text-sm text-slate-500">
                     We'll help you map columns like date, symbol, P&L, etc.
