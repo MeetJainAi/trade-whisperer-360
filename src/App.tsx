@@ -9,6 +9,7 @@ import Dashboard from "./pages/Dashboard";
 import BiasCheck from "./pages/BiasCheck";
 import AutoJournal from "./pages/AutoJournal";
 import MindsetMirror from "./pages/MindsetMirror";
+import Journals from "./pages/Journals";
 import NotFound from "./pages/NotFound";
 import Auth from "./pages/Auth";
 import { AuthProvider } from "./components/AuthProvider";
@@ -33,6 +34,7 @@ function App() {
                 <Route path="/bias-check" element={<BiasCheck />} />
                 <Route path="/auto-journal" element={<AutoJournal />} />
                 <Route path="/mindset-mirror" element={<MindsetMirror />} />
+                <Route path="/journals" element={<Journals />} />
               </Route>
               
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
@@ -46,4 +48,3 @@ function App() {
 }
 
 export default App;
-

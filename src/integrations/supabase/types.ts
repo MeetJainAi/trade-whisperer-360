@@ -9,6 +9,39 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
+      journals: {
+        Row: {
+          account_size: number | null
+          broker: string | null
+          created_at: string
+          description: string | null
+          id: string
+          name: string
+          prop_firm: string | null
+          user_id: string
+        }
+        Insert: {
+          account_size?: number | null
+          broker?: string | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          name: string
+          prop_firm?: string | null
+          user_id: string
+        }
+        Update: {
+          account_size?: number | null
+          broker?: string | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          name?: string
+          prop_firm?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       raw_trade_data: {
         Row: {
           created_at: string
@@ -47,6 +80,7 @@ export type Database = {
           created_at: string
           equity_curve: Json | null
           id: string
+          journal_id: string | null
           max_drawdown: number | null
           profit_factor: number | null
           raw_data_id: string | null
@@ -68,6 +102,7 @@ export type Database = {
           created_at?: string
           equity_curve?: Json | null
           id?: string
+          journal_id?: string | null
           max_drawdown?: number | null
           profit_factor?: number | null
           raw_data_id?: string | null
@@ -89,6 +124,7 @@ export type Database = {
           created_at?: string
           equity_curve?: Json | null
           id?: string
+          journal_id?: string | null
           max_drawdown?: number | null
           profit_factor?: number | null
           raw_data_id?: string | null
@@ -101,6 +137,13 @@ export type Database = {
           win_rate?: number | null
         }
         Relationships: [
+          {
+            foreignKeyName: "trade_sessions_journal_id_fkey"
+            columns: ["journal_id"]
+            isOneToOne: false
+            referencedRelation: "journals"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "trade_sessions_raw_data_id_fkey"
             columns: ["raw_data_id"]

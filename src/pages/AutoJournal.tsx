@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '@/components/AuthProvider';
 import { supabase } from '@/integrations/supabase/client';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -8,6 +8,10 @@ import { Tables, TablesInsert } from '@/integrations/supabase/types';
 import { calculateMetrics } from '@/lib/trade-metrics';
 import UploadView from '@/components/AutoJournal/UploadView';
 import AnalysisView from '@/components/AutoJournal/AnalysisView';
+import { Link } from 'react-router-dom';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 
 type TradeSessionWithTrades = Tables<'trade_sessions'> & { trades: Tables<'trades'>[] };
 
@@ -70,6 +74,28 @@ const AutoJournal = () => {
   const [rawFileId, setRawFileId] = useState<string | null>(null);
   const [isMappingLoading, setIsMappingLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
+  const [selectedJournalId, setSelectedJournalId] = useState<string | null>(null);
+
+  const { data: journals, isLoading: journalsLoading } = useQuery({
+    queryKey: ['journals', user?.id],
+    queryFn: async () => {
+      if (!user) return [];
+      const { data, error } = await supabase
+        .from('journals')
+        .select('id, name')
+        .eq('user_id', user.id)
+        .order('name', { ascending: true });
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!user,
+  });
+
+  useEffect(() => {
+    if (journals && journals.length === 1 && !selectedJournalId) {
+      setSelectedJournalId(journals[0].id);
+    }
+  }, [journals, selectedJournalId]);
 
   const { data: latestSession, isLoading: isLatestSessionLoading } = useQuery({
     queryKey: ['latest-trade-session', user?.id],
@@ -94,9 +120,10 @@ const AutoJournal = () => {
   });
 
   const createSessionMutation = useMutation({
-    mutationFn: async ({ trades, rawDataId }: { trades: any[], rawDataId?: string }) => {
+    mutationFn: async ({ trades, rawDataId, journalId }: { trades: any[], rawDataId?: string, journalId: string | null }) => {
       if (!user) throw new Error("You must be logged in to create a session.");
       if (trades.length === 0) throw new Error("No trades found in the file.");
+      if (!journalId) throw new Error("A journal must be selected.");
 
       const metrics = calculateMetrics(trades);
 
@@ -108,6 +135,7 @@ const AutoJournal = () => {
       const sessionData: Omit<TablesInsert<'trade_sessions'>, 'user_id'> & { user_id: string } = {
         user_id: user.id,
         raw_data_id: rawDataId,
+        journal_id: journalId,
         total_pnl: metrics.total_pnl,
         total_trades: metrics.total_trades,
         win_rate: metrics.win_rate,
@@ -243,7 +271,7 @@ const AutoJournal = () => {
         }
       
         setLoadingMessage('Creating analysis...');
-        createSessionMutation.mutate({ trades: validatedData, rawDataId: rawFileId });
+        createSessionMutation.mutate({ trades: validatedData, rawDataId: rawFileId, journalId: selectedJournalId });
     },
     onError: (error: any) => {
       toast({
@@ -355,6 +383,10 @@ const AutoJournal = () => {
   };
 
   const handleUseSampleData = () => {
+    if (!selectedJournalId) {
+      toast({ title: "Select a Journal", description: "Please select a journal before using sample data.", variant: "destructive" });
+      return;
+    }
     const sampleTrades = [
         { datetime: '2024-01-15 09:30:00', symbol: 'AAPL', side: 'BUY', qty: 100, price: 150.25, pnl: 45.00, notes: 'Breakout' },
         { datetime: '2024-01-15 09:45:00', symbol: 'AAPL', side: 'SELL', qty: 100, price: 150.70, pnl: 45.00, notes: 'Took profit' },
@@ -363,7 +395,7 @@ const AutoJournal = () => {
         { datetime: '2024-01-15 11:00:00', symbol: 'GOOG', side: 'SELL', qty: 20, price: 142.75, pnl: 55.00, notes: '' },
         { datetime: '2024-01-15 11:30:00', symbol: 'MSFT', side: 'BUY', qty: 50, price: 390.00, pnl: -35.00, notes: 'Faked out' },
     ];
-    createSessionMutation.mutate({ trades: sampleTrades });
+    createSessionMutation.mutate({ trades: sampleTrades, journalId: selectedJournalId });
   };
 
   const handleUploadNew = () => {
@@ -379,12 +411,13 @@ const AutoJournal = () => {
     setRawFileId(null);
     setIsMappingLoading(false);
     setLoadingMessage('');
+    setSelectedJournalId(null);
   }
 
   const sessionToShow = createSessionMutation.data || latestSession;
   const isProcessing = isMappingLoading || createSessionMutation.isPending || saveRawDataMutation.isPending || validateCsvMutation.isPending || mapColumnsMutation.isPending;
 
-  if (isLatestSessionLoading) {
+  if (isLatestSessionLoading || journalsLoading) {
     return (
         <div className="flex items-center justify-center h-screen bg-slate-50">
             <div className="text-center">
@@ -398,18 +431,54 @@ const AutoJournal = () => {
     return <AnalysisView currentSession={sessionToShow} onUploadNew={handleUploadNew} />;
   }
 
+  if (!journals || journals.length === 0) {
+    return (
+        <div className="flex flex-col items-center justify-center h-screen bg-slate-50 text-center p-8">
+            <h2 className="text-2xl font-bold mb-4">No Journals Found</h2>
+            <p className="text-slate-600 mb-6 max-w-md">You need to create a journal before you can upload trades. Journals help you organize sessions from different accounts or strategies.</p>
+            <Link to="/journals">
+                <Button>Go to Journals</Button>
+            </Link>
+        </div>
+    );
+  }
+
   return (
-    <UploadView
-      handleFileUpload={handleFileUpload}
-      handleUseSampleData={handleUseSampleData}
-      isLoading={isProcessing}
-      statusText={
-        saveRawDataMutation.isPending ? 'Saving raw file...' :
-        isMappingLoading ? loadingMessage :
-        createSessionMutation.isPending ? 'Processing...' :
-        'Choose CSV file'
-      }
-    />
+    <div className="flex flex-col items-center justify-center min-h-screen bg-slate-50 p-4">
+      <Card className="w-full max-w-lg">
+        <CardHeader>
+            <CardTitle>Upload New Trades</CardTitle>
+            <CardDescription>Select a journal and upload your CSV file to get an analysis.</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col items-center gap-6 pt-6">
+            <div className="w-full">
+                <label htmlFor="journal-select" className="block text-sm font-medium text-gray-700 mb-1">Select Journal</label>
+                <Select onValueChange={setSelectedJournalId} value={selectedJournalId || ''}>
+                    <SelectTrigger id="journal-select">
+                        <SelectValue placeholder="Select a journal to upload to" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        {journals?.map(journal => (
+                            <SelectItem key={journal.id} value={journal.id}>{journal.name}</SelectItem>
+                        ))}
+                    </SelectContent>
+                </Select>
+            </div>
+            <UploadView
+              handleFileUpload={handleFileUpload}
+              handleUseSampleData={handleUseSampleData}
+              isLoading={isProcessing || !selectedJournalId}
+              statusText={
+                !selectedJournalId ? 'Please select a journal' :
+                saveRawDataMutation.isPending ? 'Saving raw file...' :
+                isMappingLoading ? loadingMessage :
+                createSessionMutation.isPending ? 'Processing...' :
+                'Choose CSV file'
+              }
+            />
+        </CardContent>
+      </Card>
+    </div>
   );
 };
 
