@@ -159,6 +159,7 @@ export type Database = {
           datetime: string
           id: string
           image_url: string | null
+          journal_id: string | null
           notes: string | null
           pnl: number | null
           price: number | null
@@ -175,6 +176,7 @@ export type Database = {
           datetime: string
           id?: string
           image_url?: string | null
+          journal_id?: string | null
           notes?: string | null
           pnl?: number | null
           price?: number | null
@@ -191,6 +193,7 @@ export type Database = {
           datetime?: string
           id?: string
           image_url?: string | null
+          journal_id?: string | null
           notes?: string | null
           pnl?: number | null
           price?: number | null
@@ -203,6 +206,13 @@ export type Database = {
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "trades_journal_id_fkey"
+            columns: ["journal_id"]
+            isOneToOne: false
+            referencedRelation: "journals"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "trades_session_id_fkey"
             columns: ["session_id"]

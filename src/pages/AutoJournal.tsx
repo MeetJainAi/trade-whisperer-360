@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/components/AuthProvider';
 import { supabase } from '@/integrations/supabase/client';
@@ -125,10 +126,49 @@ const AutoJournal = () => {
       if (trades.length === 0) throw new Error("No trades found in the file.");
       if (!journalId) throw new Error("A journal must be selected.");
 
-      const metrics = calculateMetrics(trades);
+      setLoadingMessage('Checking for duplicate trades...');
+      const { data: existingTrades, error: existingTradesError } = await supabase
+        .from('trades')
+        .select('datetime, symbol, side, qty, price, pnl')
+        .eq('journal_id', journalId)
+        .eq('user_id', user.id);
+
+      if (existingTradesError) throw existingTradesError;
+
+      const existingTradeKeys = new Set(
+        existingTrades.map(t => {
+          const pnl = t.pnl !== null ? Number(t.pnl).toFixed(2) : 'null';
+          return `${new Date(t.datetime).toISOString()}|${t.symbol}|${t.side}|${t.qty}|${t.price}|${pnl}`;
+        })
+      );
+
+      const uniqueNewTrades = trades.filter(t => {
+        const pnl = t.pnl !== null ? Number(t.pnl).toFixed(2) : 'null';
+        const key = `${new Date(t.datetime).toISOString()}|${t.symbol}|${t.side}|${t.qty}|${t.price}|${pnl}`;
+        return !existingTradeKeys.has(key);
+      });
+      
+      const duplicatesFound = trades.length - uniqueNewTrades.length;
+      if (duplicatesFound > 0) {
+        toast({
+          title: "Duplicates Skipped",
+          description: `${duplicatesFound} trade(s) already existed in this journal and were skipped.`,
+        });
+      }
+
+      if (uniqueNewTrades.length === 0) {
+        toast({
+            title: "No New Trades",
+            description: "All trades from your file already exist in this journal.",
+        });
+        return null;
+      }
+      
+      setLoadingMessage('Analyzing new trades...');
+      const metrics = calculateMetrics(uniqueNewTrades);
 
       const { data: insights, error: insightsError } = await supabase.functions.invoke('analyze-trades', {
-        body: { trades },
+        body: { trades: uniqueNewTrades },
       });
       if (insightsError) throw new Error(`Failed to get AI insights: ${insightsError.message}`);
 
@@ -161,11 +201,13 @@ const AutoJournal = () => {
       
       if (sessionError) throw sessionError;
 
-      const tradesData = trades.map(trade => ({
+      setLoadingMessage('Saving new trades...');
+      const tradesData = uniqueNewTrades.map(trade => ({
         ...trade,
         session_id: newSession.id,
         user_id: user.id,
         datetime: new Date(trade.datetime).toISOString(),
+        journal_id: journalId,
       }));
 
       const { error: tradesError } = await supabase.from('trades').insert(tradesData);
@@ -174,14 +216,19 @@ const AutoJournal = () => {
       return { ...newSession, trades: tradesData } as TradeSessionWithTrades;
     },
     onSuccess: (data) => {
-      setShowUploadView(false);
-      queryClient.invalidateQueries({ queryKey: ['latest-trade-session', user?.id] });
-      setCsvData([]);
-      setCsvHeaders([]);
-      setRawFileId(null);
-      toast({ title: "Success!", description: "Your trade session has been analyzed." });
+      if (data) {
+        setShowUploadView(false);
+        queryClient.invalidateQueries({ queryKey: ['latest-trade-session', user?.id] });
+        queryClient.invalidateQueries({ queryKey: ['journals', user?.id] });
+        toast({ title: "Success!", description: "Your trade session has been analyzed." });
+      }
       setIsMappingLoading(false);
       setLoadingMessage('');
+      if (data) {
+        setCsvData([]);
+        setCsvHeaders([]);
+        setRawFileId(null);
+      }
     },
     onError: (error: any) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
