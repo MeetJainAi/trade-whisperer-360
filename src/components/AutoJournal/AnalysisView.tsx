@@ -1,10 +1,10 @@
-
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { BarChart3, ArrowLeft, TrendingUp, TrendingDown, Percent, Clock } from 'lucide-react';
+import { BarChart3, ArrowLeft, TrendingUp, TrendingDown, Percent, Clock, BookOpen } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
 import { Tables } from '@/integrations/supabase/types';
+import TradesLogTable from './TradesLogTable';
 
 type TradeSessionWithTrades = Tables<'trade_sessions'> & { trades: Tables<'trades'>[] };
 
@@ -200,6 +200,19 @@ const AnalysisView = ({ currentSession, onUploadNew }: AnalysisViewProps) => {
                 {currentSession.ai_key_insight}
               </p>
             </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-0 shadow-lg mt-8">
+          <CardHeader>
+            <CardTitle className="flex items-center space-x-2">
+                <BookOpen className="w-5 h-5 text-gray-600" />
+                <span>Trade Log</span>
+            </CardTitle>
+            <CardDescription>A detailed log of all trades in this session.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <TradesLogTable trades={currentSession.trades} />
           </CardContent>
         </Card>
       </div>

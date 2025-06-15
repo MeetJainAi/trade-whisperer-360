@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
@@ -17,6 +18,9 @@ const REQUIRED_COLUMNS = [
 
 const OPTIONAL_COLUMNS = [
     { id: 'notes', label: 'Notes' },
+    { id: 'strategy', label: 'Strategy' },
+    { id: 'tags', label: 'Tags (comma-separated)' },
+    { id: 'image_url', label: 'Image URL' },
 ];
 
 interface ColumnMappingProps {
@@ -106,7 +110,12 @@ const ColumnMapping = ({ csvHeaders, csvData, onMapComplete, onCancel, isProcess
                     const rawValue = row[mapping[col.id]];
                     if (['pnl', 'qty', 'price'].includes(col.id)) {
                         newRow[col.id] = cleanAndParseFloat(rawValue);
-                    } else {
+                    } else if (col.id === 'tags') {
+                        if (rawValue) {
+                            newRow[col.id] = String(rawValue).split(',').map(t => t.trim()).filter(Boolean);
+                        }
+                    }
+                    else {
                         newRow[col.id] = rawValue;
                     }
                 }

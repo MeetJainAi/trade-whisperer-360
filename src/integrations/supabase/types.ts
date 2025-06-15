@@ -68,39 +68,48 @@ export type Database = {
           created_at: string
           datetime: string
           id: string
+          image_url: string | null
           notes: string | null
           pnl: number | null
           price: number | null
           qty: number | null
           session_id: string
           side: string | null
+          strategy: string | null
           symbol: string | null
+          tags: string[] | null
           user_id: string
         }
         Insert: {
           created_at?: string
           datetime: string
           id?: string
+          image_url?: string | null
           notes?: string | null
           pnl?: number | null
           price?: number | null
           qty?: number | null
           session_id: string
           side?: string | null
+          strategy?: string | null
           symbol?: string | null
+          tags?: string[] | null
           user_id: string
         }
         Update: {
           created_at?: string
           datetime?: string
           id?: string
+          image_url?: string | null
           notes?: string | null
           pnl?: number | null
           price?: number | null
           qty?: number | null
           session_id?: string
           side?: string | null
+          strategy?: string | null
           symbol?: string | null
+          tags?: string[] | null
           user_id?: string
         }
         Relationships: [
