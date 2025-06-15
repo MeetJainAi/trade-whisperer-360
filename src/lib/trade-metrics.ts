@@ -18,6 +18,12 @@ export const calculateMetrics = (trades: Trade[]) => {
             profit_factor: 0,
             trades_by_day: [],
             trades_by_symbol: [],
+            largest_win: 0,
+            largest_loss: 0,
+            max_win_streak: 0,
+            max_loss_streak: 0,
+            expectancy: 0,
+            reward_risk_ratio: 0,
         };
     }
 
@@ -28,6 +34,13 @@ export const calculateMetrics = (trades: Trade[]) => {
     let cumulative_pnl = 0;
     let peak_equity = 0;
     let max_drawdown = 0;
+
+    let largest_win = 0;
+    let largest_loss = 0;
+    let current_win_streak = 0;
+    let max_win_streak = 0;
+    let current_loss_streak = 0;
+    let max_loss_streak = 0;
 
     const trades_by_time: { [key: string]: { time: string; trades: number; pnl: number } } = {};
     const trades_by_day: { [key: string]: { day: string; trades: number; pnl: number } } = {};
@@ -40,9 +53,21 @@ export const calculateMetrics = (trades: Trade[]) => {
 
         if (pnl > 0) {
             winning_trades_pnl.push(pnl);
+            if (pnl > largest_win) largest_win = pnl;
+            current_win_streak++;
+            current_loss_streak = 0;
         } else if (pnl < 0) {
             losing_trades_pnl.push(pnl);
+            if (pnl < largest_loss) largest_loss = pnl;
+            current_loss_streak++;
+            current_win_streak = 0;
+        } else {
+            current_win_streak = 0;
+            current_loss_streak = 0;
         }
+        
+        if (current_win_streak > max_win_streak) max_win_streak = current_win_streak;
+        if (current_loss_streak > max_loss_streak) max_loss_streak = current_loss_streak;
 
         equity_curve_data.push({ trade: index + 1, cumulative: cumulative_pnl });
 
@@ -91,6 +116,13 @@ export const calculateMetrics = (trades: Trade[]) => {
     const gross_loss = Math.abs(losing_trades_pnl.reduce((a,b) => a + b, 0));
     const profit_factor = gross_loss > 0 ? gross_profit / gross_loss : (gross_profit > 0 ? 9999 : 0);
 
+    const abs_avg_loss = Math.abs(avg_loss);
+    const reward_risk_ratio = abs_avg_loss > 0 ? avg_win / abs_avg_loss : 0;
+    
+    const win_rate_decimal = win_rate / 100;
+    const loss_rate_decimal = 1 - win_rate_decimal;
+    const expectancy = (win_rate_decimal * avg_win) - (loss_rate_decimal * abs_avg_loss);
+
     const time_data = Object.values(trades_by_time).sort((a,b) => a.time.localeCompare(b.time));
     
     const days_order = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -109,5 +141,11 @@ export const calculateMetrics = (trades: Trade[]) => {
         profit_factor,
         trades_by_day: day_data,
         trades_by_symbol: symbol_data,
+        largest_win,
+        largest_loss,
+        max_win_streak,
+        max_loss_streak,
+        expectancy,
+        reward_risk_ratio,
     };
 }
