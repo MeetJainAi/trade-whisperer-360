@@ -1,5 +1,4 @@
-
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useAuth } from '@/components/AuthProvider';
 import { supabase } from '@/integrations/supabase/client';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -73,7 +72,7 @@ const JournalDetail = () => {
     enabled: !!journalId,
   });
 
-  const { data: sessions, isLoading: isSessionsLoading } = useQuery<(TradeSessionWithTrades)[]>({
+  const { data: sessions, isLoading: isSessionsLoading } = useQuery({
     queryKey: ['sessions', journalId],
     queryFn: async () => {
       if (!journalId) return [];
@@ -82,12 +81,13 @@ const JournalDetail = () => {
       return (data as TradeSessionWithTrades[]) || [];
     },
     enabled: !!journalId,
-    onSuccess: (data) => {
-      if (!data || data.length === 0) {
-        setShowUploadView(true);
-      }
-    },
   });
+
+  useEffect(() => {
+    if (!isSessionsLoading && (!sessions || sessions.length === 0)) {
+      setShowUploadView(true);
+    }
+  }, [sessions, isSessionsLoading]);
 
   const allTrades = useMemo(() => sessions?.flatMap(session => session.trades) || [], [sessions]);
 
