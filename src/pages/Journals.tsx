@@ -1,4 +1,3 @@
-
 import { useState } from 'react';
 import { useAuth } from '@/components/AuthProvider';
 import { supabase } from '@/integrations/supabase/client';
@@ -37,10 +36,9 @@ const Journals = () => {
 
     const createJournalMutation = useMutation({
         mutationFn: async (newJournal: TablesInsert<'journals'>) => {
-            if (!user) throw new Error("User not authenticated");
             const { data, error } = await supabase
                 .from('journals')
-                .insert({ ...newJournal, user_id: user.id })
+                .insert(newJournal)
                 .select()
                 .single();
             if (error) throw error;
@@ -72,9 +70,14 @@ const Journals = () => {
 
     const handleCreateJournal = (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
+        if (!user) {
+            toast({ title: "Error", description: "You must be logged in to create a journal.", variant: "destructive" });
+            return;
+        }
         const formData = new FormData(event.currentTarget);
         const accountSize = formData.get('account_size');
         const newJournal: TablesInsert<'journals'> = {
+            user_id: user.id,
             name: formData.get('name') as string,
             description: formData.get('description') as string,
             prop_firm: formData.get('prop_firm') as string,
