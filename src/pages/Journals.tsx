@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useAuth } from '@/components/AuthProvider';
 import { supabase } from '@/integrations/supabase/client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -19,6 +19,7 @@ const Journals = () => {
     const { user } = useAuth();
     const queryClient = useQueryClient();
     const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+    const navigate = useNavigate();
 
     const { data: journals, isLoading } = useQuery<Journal[]>({
         queryKey: ['journals', user?.id],
@@ -154,17 +155,27 @@ const Journals = () => {
                             </TableHeader>
                             <TableBody>
                                 {journals.map((journal) => (
-                                    <TableRow key={journal.id}>
+                                    <TableRow 
+                                        key={journal.id} 
+                                        className="cursor-pointer hover:bg-slate-50"
+                                        onClick={() => navigate(`/journals/${journal.id}`)}
+                                    >
                                         <TableCell className="font-medium">
-                                            <Link to={`/journals/${journal.id}`} className="hover:underline">
-                                                {journal.name}
-                                            </Link>
+                                            {journal.name}
                                         </TableCell>
                                         <TableCell>{journal.prop_firm || '-'}</TableCell>
                                         <TableCell>{journal.account_size ? `$${journal.account_size.toLocaleString()}`: '-'}</TableCell>
                                         <TableCell>{journal.broker || '-'}</TableCell>
                                         <TableCell className="text-right">
-                                            <Button variant="ghost" size="icon" onClick={() => deleteJournalMutation.mutate(journal.id)} disabled={deleteJournalMutation.isPending}>
+                                            <Button 
+                                                variant="ghost" 
+                                                size="icon" 
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    deleteJournalMutation.mutate(journal.id)
+                                                }} 
+                                                disabled={deleteJournalMutation.isPending}
+                                            >
                                                 <Trash2 className="h-4 w-4" />
                                             </Button>
                                         </TableCell>

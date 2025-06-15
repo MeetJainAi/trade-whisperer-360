@@ -1,4 +1,3 @@
-
 import { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -120,7 +119,7 @@ const Dashboard = () => {
 
           <Card 
             className="cursor-pointer hover:shadow-lg transition-all duration-200 border-0 shadow-md"
-            onClick={() => navigate('/auto-journal')}
+            onClick={() => navigate('/journals')}
           >
             <CardHeader className="pb-4">
               <div className="flex items-center justify-between">
