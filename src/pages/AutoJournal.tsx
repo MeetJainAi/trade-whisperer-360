@@ -11,6 +11,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/components/ui/use-toast';
 import Papa from 'papaparse';
 import { Tables, TablesInsert } from '@/integrations/supabase/types';
+import ColumnMapping from '@/components/ColumnMapping';
 
 type TradeSessionWithTrades = Tables<'trade_sessions'> & { trades: Tables<'trades'>[] };
 
@@ -91,6 +92,9 @@ const AutoJournal = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [currentSession, setCurrentSession] = useState<TradeSessionWithTrades | null>(null);
+  const [uploadStep, setUploadStep] = useState<'upload' | 'map'>('upload');
+  const [csvData, setCsvData] = useState<any[]>([]);
+  const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
 
   const createSessionMutation = useMutation({
     mutationFn: async (trades: any[]) => {
@@ -142,6 +146,9 @@ const AutoJournal = () => {
     },
     onSuccess: (data) => {
       setCurrentSession(data);
+      setUploadStep('upload');
+      setCsvData([]);
+      setCsvHeaders([]);
       toast({ title: "Success!", description: "Your trade session has been analyzed." });
     },
     onError: (error: any) => {
@@ -156,15 +163,17 @@ const AutoJournal = () => {
         header: true,
         skipEmptyLines: true,
         complete: (results) => {
-          const requiredColumns = ['datetime', 'symbol', 'side', 'qty', 'price', 'pnl'];
-          const fileColumns = results.meta.fields || [];
-          const hasAllColumns = requiredColumns.every(col => fileColumns.includes(col));
-          
-          if (!hasAllColumns) {
-            toast({ title: "Invalid CSV format", description: `Missing columns. Required: ${requiredColumns.join(', ')}`, variant: "destructive" });
+          if (!results.meta.fields || results.meta.fields.length === 0) {
+            toast({ title: "Invalid CSV", description: "Could not read headers from the file.", variant: "destructive" });
             return;
           }
-          createSessionMutation.mutate(results.data);
+          if (results.data.length === 0) {
+            toast({ title: "Empty File", description: "No trade data found in the CSV.", variant: "destructive" });
+            return;
+          }
+          setCsvData(results.data as any[]);
+          setCsvHeaders(results.meta.fields);
+          setUploadStep('map');
         },
         error: (error: any) => {
             toast({ title: "CSV Parsing Error", description: error.message, variant: "destructive" });
@@ -172,6 +181,16 @@ const AutoJournal = () => {
       });
     }
   };
+
+  const handleMapComplete = (mappedData: any[]) => {
+      createSessionMutation.mutate(mappedData);
+  }
+
+  const handleCancelMapping = () => {
+      setUploadStep('upload');
+      setCsvData([]);
+      setCsvHeaders([]);
+  }
   
   const handleUseSampleData = () => {
     const sampleTrades = [
@@ -186,9 +205,41 @@ const AutoJournal = () => {
   };
 
   if (!currentSession) {
+    if (uploadStep === 'map') {
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100">
+          <header className="border-b bg-white/80 backdrop-blur-sm sticky top-0 z-50">
+            <div className="container mx-auto px-4 py-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <Button variant="ghost" onClick={handleCancelMapping}>
+                    <ArrowLeft className="w-4 h-4 mr-2" />
+                    Back to Upload
+                  </Button>
+                  <div className="w-10 h-10 rounded-full bg-gradient-to-r from-green-500 to-green-600 flex items-center justify-center">
+                    <BarChart3 className="w-6 h-6 text-white" />
+                  </div>
+                  <div>
+                    <h1 className="text-2xl font-bold text-slate-800">Auto-Journal</h1>
+                    <p className="text-sm text-slate-600">Map your columns</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </header>
+          <ColumnMapping
+            csvHeaders={csvHeaders}
+            csvData={csvData}
+            onMapComplete={handleMapComplete}
+            onCancel={handleCancelMapping}
+            isProcessing={createSessionMutation.isPending}
+          />
+        </div>
+      );
+    }
+
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100">
-        {/* Header */}
         <header className="border-b bg-white/80 backdrop-blur-sm sticky top-0 z-50">
           <div className="container mx-auto px-4 py-4">
             <div className="flex items-center justify-between">
@@ -240,13 +291,13 @@ const AutoJournal = () => {
                     {createSessionMutation.isPending ? 'Processing...' : 'Choose CSV file'}
                   </p>
                   <p className="text-sm text-slate-500">
-                    File should contain: datetime, symbol, side, qty, price, pnl, notes
+                    We'll help you map columns like date, symbol, P&L, etc.
                   </p>
                 </label>
               </div>
 
               <div className="mt-8">
-                <h3 className="text-lg font-semibold text-slate-800 mb-4">Expected CSV Format:</h3>
+                <h3 className="text-lg font-semibold text-slate-800 mb-4">Example CSV Format:</h3>
                 <div className="bg-slate-50 rounded-lg p-4 text-sm font-mono">
                   <div className="text-slate-600 mb-2">datetime,symbol,side,qty,price,pnl,notes</div>
                   <div className="text-slate-800">2024-01-15 09:30:00,AAPL,BUY,100,150.25,245.50,Good breakout</div>
