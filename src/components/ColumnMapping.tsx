@@ -26,30 +26,37 @@ interface ColumnMappingProps {
     onMapComplete: (mappedData: any[]) => void;
     onCancel: () => void;
     isProcessing: boolean;
+    initialMapping?: { [key: string]: string };
 }
 
-const ColumnMapping = ({ csvHeaders, csvData, onMapComplete, onCancel, isProcessing }: ColumnMappingProps) => {
+const ColumnMapping = ({ csvHeaders, csvData, onMapComplete, onCancel, isProcessing, initialMapping }: ColumnMappingProps) => {
     const [mapping, setMapping] = useState<{ [key: string]: string }>({});
 
     useEffect(() => {
-        const newMapping: { [key: string]: string } = {};
-        const allColumns = [...REQUIRED_COLUMNS, ...OPTIONAL_COLUMNS];
-        
-        allColumns.forEach(col => {
-            const commonNames = [col.id, col.label.toLowerCase(), col.label.replace(/ /g, '').toLowerCase()];
-            if (col.id === 'pnl') commonNames.push('profit', 'loss', 'p/l', 'profit/loss');
-            if (col.id === 'qty') commonNames.push('quantity');
-            if (col.id === 'datetime') commonNames.push('date');
+        let newMapping: { [key: string]: string } = {};
 
-            for (const header of csvHeaders) {
-                if (commonNames.includes(header.toLowerCase().trim())) {
-                    newMapping[col.id] = header;
-                    break;
+        if (initialMapping && Object.keys(initialMapping).length > 0) {
+            newMapping = { ...initialMapping };
+        } else {
+            // Fallback to basic keyword matching
+            const allColumns = [...REQUIRED_COLUMNS, ...OPTIONAL_COLUMNS];
+            
+            allColumns.forEach(col => {
+                const commonNames = [col.id, col.label.toLowerCase(), col.label.replace(/ /g, '').toLowerCase()];
+                if (col.id === 'pnl') commonNames.push('profit', 'loss', 'p/l', 'profit/loss');
+                if (col.id === 'qty') commonNames.push('quantity');
+                if (col.id === 'datetime') commonNames.push('date');
+
+                for (const header of csvHeaders) {
+                    if (commonNames.includes(header.toLowerCase().trim())) {
+                        newMapping[col.id] = header;
+                        break;
+                    }
                 }
-            }
-        });
+            });
+        }
         setMapping(newMapping);
-    }, [csvHeaders]);
+    }, [csvHeaders, initialMapping]);
 
     const handleMappingChange = (requiredColId: string, csvHeader: string) => {
         setMapping(prev => ({ ...prev, [requiredColId]: csvHeader }));

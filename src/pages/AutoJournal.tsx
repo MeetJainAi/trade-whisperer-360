@@ -95,6 +95,8 @@ const AutoJournal = () => {
   const [uploadStep, setUploadStep] = useState<'upload' | 'map'>('upload');
   const [csvData, setCsvData] = useState<any[]>([]);
   const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
+  const [initialMapping, setInitialMapping] = useState<{ [key: string]: string }>({});
+  const [isMappingLoading, setIsMappingLoading] = useState(false);
 
   const createSessionMutation = useMutation({
     mutationFn: async (trades: any[]) => {
@@ -156,27 +158,65 @@ const AutoJournal = () => {
     },
   });
 
+  const mapColumnsMutation = useMutation({
+    mutationFn: async ({ csvHeaders, csvDataSample }: { csvHeaders: string[]; csvDataSample: any[] }) => {
+      const { data, error } = await supabase.functions.invoke('map-columns-with-gemini', {
+        body: { csvHeaders, csvDataSample },
+      });
+
+      if (error) {
+        throw new Error(`Failed to get mapping from AI: ${error.message}`);
+      }
+      return data.mapping;
+    },
+    onSuccess: (mapping) => {
+      setInitialMapping(mapping);
+      setUploadStep('map');
+    },
+    onError: (error: any) => {
+      toast({
+        title: "AI Mapping Failed",
+        description: `${error.message}. We'll proceed with basic mapping. You can correct it manually.`,
+        variant: "destructive"
+      });
+      // Fallback to basic mapping if AI fails
+      setInitialMapping({});
+      setUploadStep('map');
+    },
+    onSettled: () => {
+      setIsMappingLoading(false);
+    }
+  });
+
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
+      setIsMappingLoading(true);
       Papa.parse(file, {
         header: true,
         skipEmptyLines: true,
         complete: (results) => {
           if (!results.meta.fields || results.meta.fields.length === 0) {
             toast({ title: "Invalid CSV", description: "Could not read headers from the file.", variant: "destructive" });
+            setIsMappingLoading(false);
             return;
           }
           if (results.data.length === 0) {
             toast({ title: "Empty File", description: "No trade data found in the CSV.", variant: "destructive" });
+            setIsMappingLoading(false);
             return;
           }
-          setCsvData(results.data as any[]);
-          setCsvHeaders(results.meta.fields);
-          setUploadStep('map');
+          const headers = results.meta.fields;
+          const data = results.data as any[];
+          setCsvData(data);
+          setCsvHeaders(headers);
+          
+          const sampleData = data.slice(0, 3);
+          mapColumnsMutation.mutate({ csvHeaders: headers, csvDataSample: sampleData });
         },
         error: (error: any) => {
             toast({ title: "CSV Parsing Error", description: error.message, variant: "destructive" });
+            setIsMappingLoading(false);
         }
       });
     }
@@ -233,6 +273,7 @@ const AutoJournal = () => {
             onMapComplete={handleMapComplete}
             onCancel={handleCancelMapping}
             isProcessing={createSessionMutation.isPending}
+            initialMapping={initialMapping}
           />
         </div>
       );
@@ -279,16 +320,18 @@ const AutoJournal = () => {
                   onChange={handleFileUpload}
                   className="hidden"
                   id="file-upload"
-                  disabled={createSessionMutation.isPending}
+                  disabled={createSessionMutation.isPending || isMappingLoading}
                 />
-                <label htmlFor="file-upload" className={`cursor-pointer ${createSessionMutation.isPending ? 'opacity-50' : ''}`}>
-                  {createSessionMutation.isPending ? (
+                <label htmlFor="file-upload" className={`cursor-pointer ${createSessionMutation.isPending || isMappingLoading ? 'opacity-50' : ''}`}>
+                  {isMappingLoading ? (
+                    <Loader2 className="w-12 h-12 text-slate-400 mx-auto mb-4 animate-spin" />
+                  ) : createSessionMutation.isPending ? (
                     <Loader2 className="w-12 h-12 text-slate-400 mx-auto mb-4 animate-spin" />
                   ) : (
                     <Upload className="w-12 h-12 text-slate-400 mx-auto mb-4" />
                   )}
                   <p className="text-lg font-medium text-slate-700 mb-2">
-                    {createSessionMutation.isPending ? 'Processing...' : 'Choose CSV file'}
+                    {isMappingLoading ? 'Analyzing columns with AI...' : createSessionMutation.isPending ? 'Processing...' : 'Choose CSV file'}
                   </p>
                   <p className="text-sm text-slate-500">
                     We'll help you map columns like date, symbol, P&L, etc.
@@ -310,9 +353,9 @@ const AutoJournal = () => {
                   onClick={handleUseSampleData}
                   variant="outline"
                   className="border-blue-300 text-blue-600 hover:bg-blue-50"
-                  disabled={createSessionMutation.isPending}
+                  disabled={createSessionMutation.isPending || isMappingLoading}
                 >
-                  {createSessionMutation.isPending ? 'Processing...' : 'Use Sample Data for Demo'}
+                  {createSessionMutation.isPending || isMappingLoading ? 'Processing...' : 'Use Sample Data for Demo'}
                 </Button>
               </div>
             </CardContent>
