@@ -1,61 +1,191 @@
-
 import { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { BarChart3, Upload, ArrowLeft, TrendingUp, TrendingDown, DollarSign, Percent, Clock } from 'lucide-react';
+import { BarChart3, Upload, ArrowLeft, TrendingUp, TrendingDown, DollarSign, Percent, Clock, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
+import { useAuth } from '@/components/AuthProvider';
+import { supabase } from '@/integrations/supabase/client';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from '@/components/ui/use-toast';
+import Papa from 'papaparse';
+import { Tables, TablesInsert } from '@/integrations/supabase/types';
+
+type TradeSessionWithTrades = Tables<'trade_sessions'> & { trades: Tables<'trades'>[] };
+
+const calculateMetrics = (trades: any[]) => {
+    const total_trades = trades.length;
+    if (total_trades === 0) {
+        return {
+            total_pnl: 0,
+            total_trades: 0,
+            win_rate: 0,
+            avg_win: 0,
+            avg_loss: 0,
+            max_drawdown: 0,
+            equity_curve: [],
+            time_data: [],
+        };
+    }
+
+    let total_pnl = 0;
+    const winning_trades_pnl: number[] = [];
+    const losing_trades_pnl: number[] = [];
+    const equity_curve_data = [];
+    let cumulative_pnl = 0;
+    let peak_equity = 0;
+    let max_drawdown = 0;
+
+    const trades_by_time: { [key: string]: { time: string; trades: number; pnl: number } } = {};
+
+    trades.sort((a: any, b: any) => new Date(a.datetime).getTime() - new Date(b.datetime).getTime()).forEach((trade: any, index: number) => {
+        const pnl = parseFloat(trade.pnl) || 0;
+        total_pnl += pnl;
+        cumulative_pnl += pnl;
+
+        if (pnl > 0) {
+            winning_trades_pnl.push(pnl);
+        } else if (pnl < 0) {
+            losing_trades_pnl.push(pnl);
+        }
+
+        equity_curve_data.push({ trade: index + 1, cumulative: cumulative_pnl });
+
+        if (cumulative_pnl > peak_equity) {
+            peak_equity = cumulative_pnl;
+        }
+        const drawdown = peak_equity - cumulative_pnl;
+        if (drawdown > max_drawdown) {
+            max_drawdown = drawdown;
+        }
+
+        const date = new Date(trade.datetime);
+        const time_key = `${date.getHours()}:${String(date.getMinutes()).padStart(2, '0')}`;
+        if (!trades_by_time[time_key]) {
+            trades_by_time[time_key] = { time: time_key, trades: 0, pnl: 0 };
+        }
+        trades_by_time[time_key].trades += 1;
+        trades_by_time[time_key].pnl += pnl;
+    });
+
+    const win_rate = total_trades > 0 ? (winning_trades_pnl.length / total_trades) * 100 : 0;
+    const avg_win = winning_trades_pnl.length > 0 ? winning_trades_pnl.reduce((a, b) => a + b, 0) / winning_trades_pnl.length : 0;
+    const avg_loss = losing_trades_pnl.length > 0 ? losing_trades_pnl.reduce((a, b) => a + b, 0) / losing_trades_pnl.length : 0;
+
+    const time_data = Object.values(trades_by_time).sort((a,b) => a.time.localeCompare(b.time));
+
+    return {
+        total_pnl,
+        total_trades,
+        win_rate,
+        avg_win,
+        avg_loss,
+        max_drawdown,
+        equity_curve: equity_curve_data,
+        time_data,
+    };
+}
 
 const AutoJournal = () => {
   const navigate = useNavigate();
-  const [hasData, setHasData] = useState(false);
+  const { user } = useAuth();
+  const [currentSession, setCurrentSession] = useState<TradeSessionWithTrades | null>(null);
 
-  // Sample trade data for demo
-  const sampleData = {
-    totalPnL: 245.75,
-    totalTrades: 12,
-    winRate: 67,
-    avgWin: 95.50,
-    avgLoss: -45.25,
-    maxDrawdown: 120.00,
-    timeData: [
-      { time: '9:30', trades: 3, pnl: 85 },
-      { time: '10:00', trades: 2, pnl: -25 },
-      { time: '10:30', trades: 1, pnl: 45 },
-      { time: '11:00', trades: 2, pnl: 65 },
-      { time: '11:30', trades: 1, pnl: -35 },
-      { time: '12:00', trades: 0, pnl: 0 },
-      { time: '1:00', trades: 1, pnl: 55 },
-      { time: '2:00', trades: 2, pnl: 55.75 }
-    ],
-    equityCurve: [
-      { trade: 1, cumulative: 45 },
-      { trade: 2, cumulative: 90 },
-      { trade: 3, cumulative: 125 },
-      { trade: 4, cumulative: 95 },
-      { trade: 5, cumulative: 140 },
-      { trade: 6, cumulative: 105 },
-      { trade: 7, cumulative: 160 },
-      { trade: 8, cumulative: 125 },
-      { trade: 9, cumulative: 180 },
-      { trade: 10, cumulative: 205 },
-      { trade: 11, cumulative: 225 },
-      { trade: 12, cumulative: 245.75 }
-    ]
-  };
+  const createSessionMutation = useMutation({
+    mutationFn: async (trades: any[]) => {
+      if (!user) throw new Error("You must be logged in to create a session.");
+      if (trades.length === 0) throw new Error("No trades found in the file.");
+
+      const metrics = calculateMetrics(trades);
+
+      const { data: insights, error: insightsError } = await supabase.functions.invoke('analyze-trades', {
+        body: { trades },
+      });
+      if (insightsError) throw new Error(`Failed to get AI insights: ${insightsError.message}`);
+
+      const sessionData: Omit<TablesInsert<'trade_sessions'>, 'user_id'> & { user_id: string } = {
+        user_id: user.id,
+        total_pnl: metrics.total_pnl,
+        total_trades: metrics.total_trades,
+        win_rate: metrics.win_rate,
+        avg_win: metrics.avg_win,
+        avg_loss: metrics.avg_loss,
+        max_drawdown: metrics.max_drawdown,
+        equity_curve: metrics.equity_curve as any,
+        time_data: metrics.time_data as any,
+        ai_strengths: insights.ai_strengths,
+        ai_mistakes: insights.ai_mistakes,
+        ai_fixes: insights.ai_fixes,
+        ai_key_insight: insights.ai_key_insight,
+      };
+
+      const { data: newSession, error: sessionError } = await supabase
+        .from('trade_sessions')
+        .insert(sessionData)
+        .select()
+        .single();
+      
+      if (sessionError) throw sessionError;
+
+      const tradesData = trades.map(trade => ({
+        ...trade,
+        session_id: newSession.id,
+        user_id: user.id,
+        datetime: new Date(trade.datetime).toISOString(),
+      }));
+
+      const { error: tradesError } = await supabase.from('trades').insert(tradesData);
+      if (tradesError) throw tradesError;
+      
+      return { ...newSession, trades: tradesData } as TradeSessionWithTrades;
+    },
+    onSuccess: (data) => {
+      setCurrentSession(data);
+      toast({ title: "Success!", description: "Your trade session has been analyzed." });
+    },
+    onError: (error: any) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (file && file.name.endsWith('.csv')) {
-      // Simulate file processing
-      setTimeout(() => {
-        setHasData(true);
-      }, 1500);
+    if (file) {
+      Papa.parse(file, {
+        header: true,
+        skipEmptyLines: true,
+        complete: (results) => {
+          const requiredColumns = ['datetime', 'symbol', 'side', 'qty', 'price', 'pnl'];
+          const fileColumns = results.meta.fields || [];
+          const hasAllColumns = requiredColumns.every(col => fileColumns.includes(col));
+          
+          if (!hasAllColumns) {
+            toast({ title: "Invalid CSV format", description: `Missing columns. Required: ${requiredColumns.join(', ')}`, variant: "destructive" });
+            return;
+          }
+          createSessionMutation.mutate(results.data);
+        },
+        error: (error: any) => {
+            toast({ title: "CSV Parsing Error", description: error.message, variant: "destructive" });
+        }
+      });
     }
   };
+  
+  const handleUseSampleData = () => {
+    const sampleTrades = [
+        { datetime: '2024-01-15 09:30:00', symbol: 'AAPL', side: 'BUY', qty: 100, price: 150.25, pnl: 45.00, notes: 'Breakout' },
+        { datetime: '2024-01-15 09:45:00', symbol: 'AAPL', side: 'SELL', qty: 100, price: 150.70, pnl: 45.00, notes: 'Took profit' },
+        { datetime: '2024-01-15 10:15:00', symbol: 'TSLA', side: 'SELL', qty: 50, price: 245.80, pnl: -30.00, notes: 'Stop loss hit' },
+        { datetime: '2024-01-15 10:30:00', symbol: 'GOOG', side: 'BUY', qty: 20, price: 140.00, pnl: 55.00, notes: '' },
+        { datetime: '2024-01-15 11:00:00', symbol: 'GOOG', side: 'SELL', qty: 20, price: 142.75, pnl: 55.00, notes: '' },
+        { datetime: '2024-01-15 11:30:00', symbol: 'MSFT', side: 'BUY', qty: 50, price: 390.00, pnl: -35.00, notes: 'Faked out' },
+    ];
+    createSessionMutation.mutate(sampleTrades);
+  };
 
-  if (!hasData) {
+  if (!currentSession) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100">
         {/* Header */}
@@ -98,10 +228,17 @@ const AutoJournal = () => {
                   onChange={handleFileUpload}
                   className="hidden"
                   id="file-upload"
+                  disabled={createSessionMutation.isPending}
                 />
-                <label htmlFor="file-upload" className="cursor-pointer">
-                  <Upload className="w-12 h-12 text-slate-400 mx-auto mb-4" />
-                  <p className="text-lg font-medium text-slate-700 mb-2">Choose CSV file</p>
+                <label htmlFor="file-upload" className={`cursor-pointer ${createSessionMutation.isPending ? 'opacity-50' : ''}`}>
+                  {createSessionMutation.isPending ? (
+                    <Loader2 className="w-12 h-12 text-slate-400 mx-auto mb-4 animate-spin" />
+                  ) : (
+                    <Upload className="w-12 h-12 text-slate-400 mx-auto mb-4" />
+                  )}
+                  <p className="text-lg font-medium text-slate-700 mb-2">
+                    {createSessionMutation.isPending ? 'Processing...' : 'Choose CSV file'}
+                  </p>
                   <p className="text-sm text-slate-500">
                     File should contain: datetime, symbol, side, qty, price, pnl, notes
                   </p>
@@ -119,11 +256,12 @@ const AutoJournal = () => {
 
               <div className="mt-6 text-center">
                 <Button 
-                  onClick={() => setHasData(true)}
+                  onClick={handleUseSampleData}
                   variant="outline"
                   className="border-blue-300 text-blue-600 hover:bg-blue-50"
+                  disabled={createSessionMutation.isPending}
                 >
-                  Use Sample Data for Demo
+                  {createSessionMutation.isPending ? 'Processing...' : 'Use Sample Data for Demo'}
                 </Button>
               </div>
             </CardContent>
@@ -149,12 +287,12 @@ const AutoJournal = () => {
               </div>
               <div>
                 <h1 className="text-2xl font-bold text-slate-800">Trade Analysis</h1>
-                <p className="text-sm text-slate-600">12 trades processed • Today's session</p>
+                <p className="text-sm text-slate-600">{currentSession.total_trades} trades processed • {new Date(currentSession.created_at).toLocaleDateString()}</p>
               </div>
             </div>
             <Button 
               variant="outline" 
-              onClick={() => setHasData(false)}
+              onClick={() => setCurrentSession(null)}
               className="border-slate-300"
             >
               Upload New File
@@ -171,14 +309,14 @@ const AutoJournal = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-slate-600 mb-1">Total P&L</p>
-                  <p className={`text-2xl font-bold ${sampleData.totalPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    ${sampleData.totalPnL >= 0 ? '+' : ''}{sampleData.totalPnL}
+                  <p className={`text-2xl font-bold ${currentSession.total_pnl && currentSession.total_pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    ${currentSession.total_pnl && currentSession.total_pnl >= 0 ? '+' : ''}{currentSession.total_pnl?.toFixed(2)}
                   </p>
                 </div>
                 <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
-                  sampleData.totalPnL >= 0 ? 'bg-green-100' : 'bg-red-100'
+                  currentSession.total_pnl && currentSession.total_pnl >= 0 ? 'bg-green-100' : 'bg-red-100'
                 }`}>
-                  {sampleData.totalPnL >= 0 ? (
+                  {currentSession.total_pnl && currentSession.total_pnl >= 0 ? (
                     <TrendingUp className="w-6 h-6 text-green-600" />
                   ) : (
                     <TrendingDown className="w-6 h-6 text-red-600" />
@@ -193,7 +331,7 @@ const AutoJournal = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-slate-600 mb-1">Win Rate</p>
-                  <p className="text-2xl font-bold text-slate-800">{sampleData.winRate}%</p>
+                  <p className="text-2xl font-bold text-slate-800">{currentSession.win_rate?.toFixed(2)}%</p>
                 </div>
                 <div className="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center">
                   <Percent className="w-6 h-6 text-blue-600" />
@@ -207,7 +345,7 @@ const AutoJournal = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-slate-600 mb-1">Total Trades</p>
-                  <p className="text-2xl font-bold text-slate-800">{sampleData.totalTrades}</p>
+                  <p className="text-2xl font-bold text-slate-800">{currentSession.total_trades}</p>
                 </div>
                 <div className="w-12 h-12 rounded-xl bg-purple-100 flex items-center justify-center">
                   <BarChart3 className="w-6 h-6 text-purple-600" />
@@ -221,7 +359,7 @@ const AutoJournal = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-slate-600 mb-1">Max Drawdown</p>
-                  <p className="text-2xl font-bold text-red-600">-${sampleData.maxDrawdown}</p>
+                  <p className="text-2xl font-bold text-red-600">-${currentSession.max_drawdown?.toFixed(2)}</p>
                 </div>
                 <div className="w-12 h-12 rounded-xl bg-red-100 flex items-center justify-center">
                   <TrendingDown className="w-6 h-6 text-red-600" />
@@ -243,7 +381,7 @@ const AutoJournal = () => {
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={sampleData.timeData}>
+                <BarChart data={currentSession.time_data as any[]}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="time" />
                   <YAxis />
@@ -264,7 +402,7 @@ const AutoJournal = () => {
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={sampleData.equityCurve}>
+                <LineChart data={currentSession.equity_curve as any[]}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="trade" />
                   <YAxis />
@@ -290,9 +428,7 @@ const AutoJournal = () => {
                   Top Strengths
                 </h4>
                 <ul className="space-y-2 text-sm text-green-800">
-                  <li>• Excellent risk management - avg loss only $45</li>
-                  <li>• Strong morning performance (9:30-11:00)</li>
-                  <li>• Good at cutting losses quickly</li>
+                  {currentSession.ai_strengths?.map((item, i) => <li key={i}>• {item}</li>)}
                 </ul>
               </div>
               
@@ -302,9 +438,7 @@ const AutoJournal = () => {
                   Repeating Mistakes
                 </h4>
                 <ul className="space-y-2 text-sm text-red-800">
-                  <li>• Overtrading in lunch hour (12-1 PM)</li>
-                  <li>• Taking profits too early on winners</li>
-                  <li>• Revenge trading after 2 losses</li>
+                  {currentSession.ai_mistakes?.map((item, i) => <li key={i}>• {item}</li>)}
                 </ul>
               </div>
               
@@ -314,9 +448,7 @@ const AutoJournal = () => {
                   3 Fixes for Tomorrow
                 </h4>
                 <ul className="space-y-2 text-sm text-blue-800">
-                  <li>• Avoid trading 12-1 PM completely</li>
-                  <li>• Let winners run to 2:1 R ratio minimum</li>
-                  <li>• Take break after 2 consecutive losses</li>
+                  {currentSession.ai_fixes?.map((item, i) => <li key={i}>• {item}</li>)}
                 </ul>
               </div>
             </div>
@@ -324,8 +456,7 @@ const AutoJournal = () => {
             <div className="mt-8 p-6 bg-gradient-to-r from-blue-50 to-green-50 rounded-lg border border-blue-200">
               <h4 className="font-semibold text-slate-800 mb-2">Key Insight</h4>
               <p className="text-slate-700">
-                Your best trading happens in the first 90 minutes of the session. Consider concentrating 
-                more of your risk budget during this time and reducing position sizes after 11 AM.
+                {currentSession.ai_key_insight}
               </p>
             </div>
           </CardContent>
