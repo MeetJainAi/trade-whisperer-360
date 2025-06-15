@@ -1,4 +1,3 @@
-
 import { useState } from 'react';
 import { useAuth } from '@/components/AuthProvider';
 import { supabase } from '@/integrations/supabase/client';
@@ -19,12 +18,13 @@ const AutoJournal = () => {
   const [uploadStep, setUploadStep] = useState<'upload' | 'map'>('upload');
   const [csvData, setCsvData] = useState<any[]>([]);
   const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
+  const [rawFileId, setRawFileId] = useState<string | null>(null);
   const [initialMapping, setInitialMapping] = useState<{ [key: string]: string }>({});
   const [isMappingLoading, setIsMappingLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
 
   const createSessionMutation = useMutation({
-    mutationFn: async (trades: any[]) => {
+    mutationFn: async ({ trades, rawDataId }: { trades: any[], rawDataId?: string }) => {
       if (!user) throw new Error("You must be logged in to create a session.");
       if (trades.length === 0) throw new Error("No trades found in the file.");
 
@@ -37,6 +37,7 @@ const AutoJournal = () => {
 
       const sessionData: Omit<TablesInsert<'trade_sessions'>, 'user_id'> & { user_id: string } = {
         user_id: user.id,
+        raw_data_id: rawDataId,
         total_pnl: metrics.total_pnl,
         total_trades: metrics.total_trades,
         win_rate: metrics.win_rate,
@@ -76,6 +77,7 @@ const AutoJournal = () => {
       setUploadStep('upload');
       setCsvData([]);
       setCsvHeaders([]);
+      setRawFileId(null);
       toast({ title: "Success!", description: "Your trade session has been analyzed." });
     },
     onError: (error: any) => {
@@ -147,6 +149,36 @@ const AutoJournal = () => {
     },
   });
 
+  const saveRawDataMutation = useMutation({
+    mutationFn: async ({ file, headers, data }: { file: File; headers: string[]; data: any[] }) => {
+      if (!user) throw new Error("You must be logged in.");
+
+      const { data: rawData, error } = await supabase
+        .from('raw_trade_data')
+        .insert({
+          user_id: user.id,
+          file_name: file.name,
+          headers: headers,
+          data: data as any,
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      return rawData;
+    },
+    onSuccess: (rawData, variables) => {
+      setRawFileId(rawData.id);
+      const sampleData = (variables.data as any[]).slice(0, 3);
+      validateCsvMutation.mutate({ csvHeaders: variables.headers, csvDataSample: sampleData });
+    },
+    onError: (error: any) => {
+      toast({ title: "Error saving raw file", description: error.message, variant: "destructive" });
+      setIsMappingLoading(false);
+      setLoadingMessage('');
+    }
+  });
+
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
@@ -173,8 +205,8 @@ const AutoJournal = () => {
           setCsvData(data);
           setCsvHeaders(headers);
           
-          const sampleData = data.slice(0, 3);
-          validateCsvMutation.mutate({ csvHeaders: headers, csvDataSample: sampleData });
+          setLoadingMessage('Saving raw file...');
+          saveRawDataMutation.mutate({ file, headers, data });
         },
         error: (error: any) => {
             toast({ title: "CSV Parsing Error", description: error.message, variant: "destructive" });
@@ -186,13 +218,18 @@ const AutoJournal = () => {
   };
 
   const handleMapComplete = (mappedData: any[]) => {
-      createSessionMutation.mutate(mappedData);
+      if (!rawFileId) {
+        toast({ title: "Error", description: "Could not find the raw file reference. Please try uploading again.", variant: "destructive" });
+        return;
+      }
+      createSessionMutation.mutate({ trades: mappedData, rawDataId: rawFileId });
   }
 
   const handleCancelMapping = () => {
       setUploadStep('upload');
       setCsvData([]);
       setCsvHeaders([]);
+      setRawFileId(null);
   }
   
   const handleUseSampleData = () => {
@@ -204,7 +241,7 @@ const AutoJournal = () => {
         { datetime: '2024-01-15 11:00:00', symbol: 'GOOG', side: 'SELL', qty: 20, price: 142.75, pnl: 55.00, notes: '' },
         { datetime: '2024-01-15 11:30:00', symbol: 'MSFT', side: 'BUY', qty: 50, price: 390.00, pnl: -35.00, notes: 'Faked out' },
     ];
-    createSessionMutation.mutate(sampleTrades);
+    createSessionMutation.mutate({ trades: sampleTrades });
   };
 
   const handleUploadNew = () => {
@@ -213,6 +250,7 @@ const AutoJournal = () => {
     setCsvData([]);
     setCsvHeaders([]);
     setInitialMapping({});
+    setRawFileId(null);
   }
 
   if (currentSession) {
@@ -236,8 +274,9 @@ const AutoJournal = () => {
     <UploadView
       handleFileUpload={handleFileUpload}
       handleUseSampleData={handleUseSampleData}
-      isLoading={isMappingLoading || createSessionMutation.isPending}
+      isLoading={isMappingLoading || createSessionMutation.isPending || saveRawDataMutation.isPending}
       statusText={
+        saveRawDataMutation.isPending ? 'Saving raw file...' :
         isMappingLoading ? loadingMessage :
         createSessionMutation.isPending ? 'Processing...' :
         'Choose CSV file'

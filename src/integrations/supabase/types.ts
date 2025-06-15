@@ -9,6 +9,33 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
+      raw_trade_data: {
+        Row: {
+          created_at: string
+          data: Json | null
+          file_name: string | null
+          headers: string[] | null
+          id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          data?: Json | null
+          file_name?: string | null
+          headers?: string[] | null
+          id?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          data?: Json | null
+          file_name?: string | null
+          headers?: string[] | null
+          id?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       trade_sessions: {
         Row: {
           ai_fixes: string[] | null
@@ -21,6 +48,7 @@ export type Database = {
           equity_curve: Json | null
           id: string
           max_drawdown: number | null
+          raw_data_id: string | null
           time_data: Json | null
           total_pnl: number | null
           total_trades: number | null
@@ -38,6 +66,7 @@ export type Database = {
           equity_curve?: Json | null
           id?: string
           max_drawdown?: number | null
+          raw_data_id?: string | null
           time_data?: Json | null
           total_pnl?: number | null
           total_trades?: number | null
@@ -55,13 +84,22 @@ export type Database = {
           equity_curve?: Json | null
           id?: string
           max_drawdown?: number | null
+          raw_data_id?: string | null
           time_data?: Json | null
           total_pnl?: number | null
           total_trades?: number | null
           user_id?: string
           win_rate?: number | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "trade_sessions_raw_data_id_fkey"
+            columns: ["raw_data_id"]
+            isOneToOne: true
+            referencedRelation: "raw_trade_data"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       trades: {
         Row: {
