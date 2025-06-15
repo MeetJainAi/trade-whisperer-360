@@ -3,12 +3,26 @@ import { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { BarChart3, Brain, Target, TrendingUp, Shield, Zap } from 'lucide-react';
+import { BarChart3, Brain, Target, TrendingUp, Shield, Zap, LogOut } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/components/AuthProvider';
+import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
 
 const Index = () => {
   const navigate = useNavigate();
   const [hoveredModule, setHoveredModule] = useState<string | null>(null);
+  const { user } = useAuth();
+
+  const handleLogout = async () => {
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      toast.error(error.message);
+    } else {
+      toast.success("You've been logged out.");
+      navigate('/');
+    }
+  };
 
   const modules = [
     {
@@ -46,7 +60,7 @@ const Index = () => {
       <header className="border-b bg-white/80 backdrop-blur-sm sticky top-0 z-50">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
+            <div className="flex items-center space-x-3 cursor-pointer" onClick={() => navigate('/')}>
               <div className="w-10 h-10 rounded-full bg-gradient-to-r from-blue-600 to-green-500 flex items-center justify-center">
                 <TrendingUp className="w-6 h-6 text-white" />
               </div>
@@ -55,12 +69,31 @@ const Index = () => {
                 <p className="text-sm text-slate-600">Your AI Trading Coach</p>
               </div>
             </div>
-            <Button 
-              onClick={() => navigate('/dashboard')}
-              className="bg-gradient-to-r from-blue-600 to-green-500 hover:from-blue-700 hover:to-green-600"
-            >
-              Get Started
-            </Button>
+            <div className="flex items-center gap-2">
+              {user ? (
+                <>
+                  <Button 
+                    variant="ghost"
+                    onClick={() => navigate('/dashboard')}
+                  >
+                    Dashboard
+                  </Button>
+                  <Button 
+                    onClick={handleLogout}
+                  >
+                    <LogOut className="w-4 h-4 mr-2" />
+                    Logout
+                  </Button>
+                </>
+              ) : (
+                <Button 
+                  onClick={() => navigate('/auth')}
+                  className="bg-gradient-to-r from-blue-600 to-green-500 hover:from-blue-700 hover:to-green-600"
+                >
+                  Login / Sign Up
+                </Button>
+              )}
+            </div>
           </div>
         </div>
       </header>
