@@ -6,12 +6,11 @@ import { toast } from '@/components/ui/use-toast';
 import Papa from 'papaparse';
 import { Tables, TablesInsert } from '@/integrations/supabase/types';
 import { calculateMetrics } from '@/lib/trade-metrics';
-import UploadView from '@/components/AutoJournal/UploadView';
 import AnalysisView from '@/components/AutoJournal/AnalysisView';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Upload, Loader2 } from 'lucide-react';
 
 type TradeSessionWithTrades = Tables<'trade_sessions'> & { trades: Tables<'trades'>[] };
 type Journal = Tables<'journals'>;
@@ -294,12 +293,49 @@ const JournalDetail = () => {
             <Card className="w-full max-w-lg">
                 <CardHeader><CardTitle>Upload Trades</CardTitle><CardDescription>Upload a CSV file to analyze your trades.</CardDescription></CardHeader>
                 <CardContent>
-                    <UploadView
-                        handleFileUpload={handleFileUpload}
-                        handleUseSampleData={handleUseSampleData}
-                        isLoading={isCurrentlyProcessing}
-                        statusText={loadingMessage || 'Choose CSV file'}
-                    />
+                    <div className="border-2 border-dashed border-slate-300 rounded-lg p-12 text-center hover:border-blue-400 transition-colors">
+                      <input
+                        type="file"
+                        accept=".csv"
+                        onChange={handleFileUpload}
+                        className="hidden"
+                        id="file-upload"
+                        disabled={isCurrentlyProcessing}
+                      />
+                      <label htmlFor="file-upload" className={`cursor-pointer ${isCurrentlyProcessing ? 'opacity-50' : ''}`}>
+                        {isCurrentlyProcessing ? (
+                          <Loader2 className="w-12 h-12 text-slate-400 mx-auto mb-4 animate-spin" />
+                        ) : (
+                          <Upload className="w-12 h-12 text-slate-400 mx-auto mb-4" />
+                        )}
+                        <p className="text-lg font-medium text-slate-700 mb-2">
+                          {loadingMessage || 'Choose CSV file'}
+                        </p>
+                        <p className="text-sm text-slate-500">
+                          We'll help you map columns like date, symbol, P&L, etc.
+                        </p>
+                      </label>
+                    </div>
+
+                    <div className="mt-8">
+                      <h3 className="text-lg font-semibold text-slate-800 mb-4">Example CSV Format:</h3>
+                      <div className="bg-slate-50 rounded-lg p-4 text-sm font-mono">
+                        <div className="text-slate-600 mb-2">datetime,symbol,side,qty,price,pnl,notes</div>
+                        <div className="text-slate-800">2024-01-15 09:30:00,AAPL,BUY,100,150.25,245.50,Good breakout</div>
+                        <div className="text-slate-800">2024-01-15 10:15:00,TSLA,SELL,50,245.80,-125.00,Stop loss hit</div>
+                      </div>
+                    </div>
+
+                    <div className="mt-6 text-center">
+                      <Button
+                        onClick={handleUseSampleData}
+                        variant="outline"
+                        className="border-blue-300 text-blue-600 hover:bg-blue-50"
+                        disabled={isCurrentlyProcessing}
+                      >
+                        {isCurrentlyProcessing ? 'Processing...' : 'Use Sample Data for Demo'}
+                      </Button>
+                    </div>
                 </CardContent>
             </Card>
         </div>
