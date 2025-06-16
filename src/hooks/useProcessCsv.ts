@@ -32,7 +32,9 @@ export const useProcessCsv = (journal: Journal) => {
 
         setLoadingMessage('Parsing CSV file...');
 
-        Papa.parse(file, {
+        const text = await file.text();
+
+        Papa.parse(text, {
             header: true,
             skipEmptyLines: true,
             complete: async (results) => {
@@ -47,6 +49,19 @@ export const useProcessCsv = (journal: Journal) => {
                     const csvHeaders = results.meta?.fields || [];
                     const csvDataSample = (results.data as any[]).slice(0, 3);
                     let headerMapping: Record<string, string> = {};
+
+                    try {
+                        const { data: validationData, error: validationError } = await supabase.functions.invoke('validate-csv-content', {
+                            body: { csvHeaders, csvDataSample },
+                        });
+                        if (validationError) throw validationError;
+                        if (!(validationData as any)?.is_trading_related) {
+                            throw new Error('The uploaded CSV does not appear to contain trading data.');
+                        }
+                    } catch (err) {
+                        console.error('CSV validation failed:', err);
+                        throw err;
+                    }
 
                     try {
                         setLoadingMessage('Mapping CSV columns...');
@@ -101,6 +116,19 @@ export const useProcessCsv = (journal: Journal) => {
                         return;
                     }
 
+                    setLoadingMessage('Saving raw file...');
+                    const { data: rawData, error: rawError } = await supabase
+                        .from('raw_trade_data')
+                        .insert({
+                            user_id: user.id,
+                            file_name: file.name,
+                            headers: csvHeaders,
+                            data: { mapping: headerMapping, rows: results.data },
+                        })
+                        .select()
+                        .single();
+                    if (rawError) throw rawError;
+
                     setLoadingMessage('Calculating trade metrics...');
                     const metrics = calculateMetrics(tradesToInsert as Trade[]);
 
@@ -119,6 +147,7 @@ export const useProcessCsv = (journal: Journal) => {
                         time_data: metrics.time_data,
                         trades_by_day: metrics.trades_by_day,
                         trades_by_symbol: metrics.trades_by_symbol,
+                        raw_data_id: rawData.id,
                     };
 
                     const { data: newSession, error: sessionError } = await supabase
@@ -139,6 +168,18 @@ export const useProcessCsv = (journal: Journal) => {
 
                     const { error: tradesError } = await supabase.from('trades').insert(tradesData);
                     if (tradesError) throw tradesError;
+
+                    try {
+                        setLoadingMessage('Generating AI insights...');
+                        const { data: insights, error: insightsError } = await supabase.functions.invoke('analyze-trades', {
+                            body: { trades: tradesData.slice(0, 100) },
+                        });
+                        if (!insightsError && insights) {
+                            await supabase.from('trade_sessions').update(insights as any).eq('id', newSession.id);
+                        }
+                    } catch (err) {
+                        console.warn('Failed to generate AI insights:', err);
+                    }
 
                     toast({ title: "Success!", description: "CSV data uploaded and analyzed." });
                     setLoadingMessage('');
