@@ -13,37 +13,31 @@ interface CsvRow {
   [key: string]: string | number | undefined;
 }
 
-// JSON-serialisable summary type
-interface UploadSummary {
-  totalRows: number;
-  duplicatesSkipped: number;
-  newEntriesInserted: number;
-  fileName: string;
-  uploadTimestamp: string;
-  duplicateEntries: Array<{
-    datetime: string;
-    symbol: string;
-    side: string;
-    qty: number;
-    price: number;
-    pnl: number;
-  }>;
-}
+export const safeParseFloat = (value: unknown): number => {
+  if (typeof value !== 'string') return 0;
+  let cleanValue = value.trim();
+  // Record negative state when parentheses or trailing minus are present
+  let isNegative = false;
+  if (cleanValue.startsWith('(') && cleanValue.endsWith(')')) {
+    isNegative = true;
+    cleanValue = cleanValue.slice(1, -1);
+  }
+  if (cleanValue.endsWith('-')) {
+    isNegative = !isNegative;
+    cleanValue = cleanValue.slice(0, -1);
+  }
+  // Remove currency symbols, commas and spaces
+  cleanValue = cleanValue.replace(/[$,\s]+/g, '');
+  // Strip any remaining non-digit or dot characters
+  cleanValue = cleanValue.replace(/[^0-9.]+/g, '');
+  // Collapse multiple dots into one
+  const parts = cleanValue.split('.');
+  if (parts.length > 2) {
+    cleanValue = parts[0] + '.' + parts.slice(1).join('');
 
-/** Robust float parser handling $, commas, spaces, (neg), trailing -neg, etc. */
-const safeParseFloat = (value: unknown): number => {
-  if (typeof value === 'number') return value;
-  if (typeof value === 'string') {
-    let cleanValue = value.trim();
-
-    // (12.50) -> -12.50
-    if (cleanValue.startsWith('(') && cleanValue.endsWith(')')) {
-      cleanValue = '-' + cleanValue.slice(1, -1);
-    }
-    // 12.50-  -> -12.50
-    if (cleanValue.endsWith('-')) {
-      cleanValue = '-' + cleanValue.slice(0, -1);
-    }
+  const parsed = parseFloat(cleanValue);
+  if (isNaN(parsed)) return 0;
+  return isNegative ? -parsed : parsed;
 
     // Remove currency symbols, commas, spaces first
     cleanValue = cleanValue.replace(/[$,\s]+/g, '');
