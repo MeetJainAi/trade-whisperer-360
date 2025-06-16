@@ -41,15 +41,27 @@ const safeParseFloat = (value: unknown): number => {
       cleanValue = '-' + cleanValue.slice(1, -1);
     }
 
+    // Handle trailing negative sign: 12.50- -> -12.50
+    if (cleanValue.endsWith('-')) {
+      cleanValue = '-' + cleanValue.slice(0, -1);
+    }
+
     // Remove all non-numeric characters except dots and negative signs
-    cleanValue = cleanValue.replace(/[^0-9.-]+/g, "");
-    
-    // Handle multiple negative signs or dots
+    cleanValue = cleanValue.replace(/[^0-9.-]+/g, '');
+
+    // Normalize multiple negative signs by keeping only the leading one
+    const isNegative = cleanValue.includes('-');
+    cleanValue = cleanValue.replace(/-/g, '');
+    if (isNegative) {
+      cleanValue = '-' + cleanValue;
+    }
+
+    // Handle multiple dots
     const parts = cleanValue.split('.');
     if (parts.length > 2) {
       cleanValue = parts[0] + '.' + parts.slice(1).join('');
     }
-    
+
     const parsed = parseFloat(cleanValue);
     return isNaN(parsed) ? 0 : parsed;
   }
@@ -62,7 +74,18 @@ const createCompositeKey = (trade: Omit<TablesInsert<'trades'>, 'user_id' | 'jou
   // Fixed the bug: use trade.price instead of trade.pnl for price field
   const symbol = trade.symbol ? trade.symbol.toUpperCase().trim() : '';
   const side = trade.side ? trade.side.toUpperCase().trim() : '';
-  return `${normalizedDatetime}|${symbol}|${side}|${trade.qty}|${trade.price}|${trade.pnl}`;
+
+  const fmt = (n: number | null | undefined) =>
+    n === null || n === undefined ? '' : Number(n).toFixed(8);
+
+  return [
+    normalizedDatetime,
+    symbol,
+    side,
+    fmt(trade.qty),
+    fmt(trade.price),
+    fmt(trade.pnl)
+  ].join('|');
 };
 
 export const useProcessCsv = (journal: Journal) => {
@@ -152,7 +175,7 @@ export const useProcessCsv = (journal: Journal) => {
             if (!unique[key]) unique[key] = trade;
           });
 
-          let tradesToProcess = Object.values(unique);
+          const tradesToProcess = Object.values(unique);
           const totalParsedRows = tradesToProcess.length;
 
           if (tradesToProcess.length === 0) {
