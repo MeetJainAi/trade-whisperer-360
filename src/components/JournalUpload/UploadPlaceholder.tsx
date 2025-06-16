@@ -1,4 +1,3 @@
-
 import { Upload, Loader2 } from 'lucide-react';
 
 interface UploadPlaceholderProps {
@@ -14,14 +13,18 @@ const UploadPlaceholder = ({ loadingMessage, onFileUpload }: UploadPlaceholderPr
     }
     // Reset file input to allow re-uploading the same file
     if (event.target) {
-        event.target.value = '';
+      event.target.value = '';
     }
   };
 
   const isDisabled = !!loadingMessage;
 
   return (
-    <label className={`block cursor-pointer border-2 border-dashed border-slate-300 rounded-lg p-12 text-center transition-colors hover:border-blue-400 ${isDisabled ? 'cursor-not-allowed opacity-60' : ''}`}>
+    <label
+      className={`block cursor-pointer border-2 border-dashed border-slate-300 rounded-lg p-12 text-center transition-colors hover:border-blue-400 ${
+        isDisabled ? 'pointer-events-none opacity-60' : ''
+      }`}
+    >
       <input
         type="file"
         onChange={handleFileChange}
