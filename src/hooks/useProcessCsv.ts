@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import Papa from 'papaparse';
 import { supabase } from '@/integrations/supabase/client';
-import { toast } from '@/components/ui/use-toast';
+import { toast } from '@/hooks/use-toast';
 import { Tables, TablesInsert } from '@/integrations/supabase/types';
 import { useAuth } from '@/components/AuthProvider';
 import { calculateMetrics } from '@/lib/trade-metrics';
@@ -30,60 +30,102 @@ interface UploadSummary {
   }>;
 }
 
-/** Robust float parser handling $, commas, spaces, (neg), trailing -neg, etc. */
+/** Enhanced robust float parser handling $, commas, spaces, (neg), trailing -neg, etc. */
 const safeParseFloat = (value: unknown): number => {
   if (typeof value === 'number') return value;
   if (typeof value === 'string') {
     let cleanValue = value.trim();
+    
+    // Handle empty or invalid strings
+    if (!cleanValue || cleanValue === '' || cleanValue === 'null' || cleanValue === 'undefined') {
+      return 0;
+    }
 
-    // (12.50) -> -12.50
+    let isNegative = false;
+
+    // Check for parentheses indicating negative (12.50) -> -12.50
     if (cleanValue.startsWith('(') && cleanValue.endsWith(')')) {
-      cleanValue = '-' + cleanValue.slice(1, -1);
+      isNegative = true;
+      cleanValue = cleanValue.slice(1, -1);
     }
-    // 12.50-  -> -12.50
+
+    // Check for trailing minus (12.50-) -> -12.50
     if (cleanValue.endsWith('-')) {
-      cleanValue = '-' + cleanValue.slice(0, -1);
+      isNegative = true;
+      cleanValue = cleanValue.slice(0, -1);
     }
 
-    // Remove currency symbols, commas, spaces first
-    cleanValue = cleanValue.replace(/[$,\s]+/g, '');
-    // Then strip anything not digit / dot / minus
-    cleanValue = cleanValue.replace(/[^0-9.-]+/g, '');
+    // Check for leading minus
+    if (cleanValue.startsWith('-')) {
+      isNegative = true;
+      cleanValue = cleanValue.slice(1);
+    }
 
-    // Ensure only leading minus
-    const isNeg = cleanValue.includes('-');
-    cleanValue = cleanValue.replace(/-/g, '');
-    if (isNeg) cleanValue = '-' + cleanValue;
-
-    // Collapse multiple dots (keep first)
-    const parts = cleanValue.split('.');
-    if (parts.length > 2) cleanValue = parts[0] + '.' + parts.slice(1).join('');
+    // Remove currency symbols, commas, spaces, and other non-numeric characters
+    cleanValue = cleanValue.replace(/[$,%\s€£¥₹]+/g, '');
+    
+    // Keep only digits and dots
+    cleanValue = cleanValue.replace(/[^0-9.]/g, '');
+    
+    // Handle multiple dots - keep only the first one
+    const dotIndex = cleanValue.indexOf('.');
+    if (dotIndex !== -1) {
+      const beforeDot = cleanValue.substring(0, dotIndex);
+      const afterDot = cleanValue.substring(dotIndex + 1).replace(/\./g, '');
+      cleanValue = beforeDot + '.' + afterDot;
+    }
 
     const parsed = parseFloat(cleanValue);
-    return isNaN(parsed) ? 0 : parsed;
+    const result = isNaN(parsed) ? 0 : parsed;
+    
+    return isNegative ? -result : result;
   }
   return 0;
 };
 
-/** Composite key for deduplication (epoch|symbol|side|qty|price|pnl) */
+/** Enhanced composite key for deduplication with better normalization */
 const createCompositeKey = (
   trade: Omit<TablesInsert<'trades'>, 'user_id' | 'journal_id' | 'session_id'>
 ): string => {
+  // Normalize datetime to epoch milliseconds for consistent comparison
   const epochTime = new Date(trade.datetime).getTime();
-  const symbol = trade.symbol ? trade.symbol.toUpperCase().trim() : '';
-  const side = trade.side ? trade.side.toUpperCase().trim() : '';
+  
+  // Normalize symbol and side to uppercase and trim whitespace
+  const symbol = (trade.symbol || '').toString().toUpperCase().trim();
+  const side = (trade.side || '').toString().toUpperCase().trim();
 
-  const fmt = (n: number | null | undefined) =>
-    n === null || n === undefined ? '' : Number(n).toFixed(8);
+  // Format numbers to fixed decimal places for consistent comparison
+  const formatNumber = (n: number | null | undefined) => {
+    if (n === null || n === undefined) return '0';
+    return Number(n).toFixed(8);
+  };
 
-  return [
-    epochTime,
-    symbol,
-    side,
-    fmt(trade.qty),
-    fmt(trade.price),
-    fmt(trade.pnl)
-  ].join('|');
+  const qty = formatNumber(trade.qty);
+  const price = formatNumber(trade.price);
+  const pnl = formatNumber(trade.pnl);
+
+  return `${epochTime}|${symbol}|${side}|${qty}|${price}|${pnl}`;
+};
+
+/** Check if data appears to be mock/demo data */
+const isMockData = (trade: any): boolean => {
+  const mockSymbols = ['AAPL', 'TSLA', 'GOOG', 'GOOGL', 'META', 'NVDA', 'AMZN', 'MSFT', 'DEMO', 'TEST', 'SAMPLE'];
+  const symbol = (trade.symbol || '').toString().toUpperCase().trim();
+  
+  // Check for mock symbols
+  if (mockSymbols.includes(symbol)) return true;
+  
+  // Check for obvious test data patterns
+  if (symbol.includes('TEST') || symbol.includes('DEMO') || symbol.includes('SAMPLE')) return true;
+  
+  // Check for round numbers that might indicate mock data
+  const pnl = Math.abs(safeParseFloat(trade.pnl));
+  const price = safeParseFloat(trade.price);
+  
+  // Very round numbers might be mock data (but this is less reliable)
+  if (pnl > 0 && pnl % 100 === 0 && price > 0 && price % 10 === 0) return true;
+  
+  return false;
 };
 
 export const useProcessCsv = (journal: Journal) => {
@@ -146,38 +188,69 @@ export const useProcessCsv = (journal: Journal) => {
 
           /* ------------ Parse & deduplicate in-memory ------------ */
           setLoadingMessage('Processing trade data...');
-          const unique: Record<
-            string,
-            Omit<TablesInsert<'trades'>, 'user_id' | 'journal_id' | 'session_id'>
-          > = {};
+          const parsedTrades: Array<Omit<TablesInsert<'trades'>, 'user_id' | 'journal_id' | 'session_id'>> = [];
 
-          results.data.forEach((row) => {
-            const datetimeVal = getVal(row, 'datetime') || row.Timestamp || row.Time;
-            if (!datetimeVal) return;
+          results.data.forEach((row, index) => {
+            try {
+              const datetimeVal = getVal(row, 'datetime') || row.Timestamp || row.Time || row.Date;
+              if (!datetimeVal) {
+                console.warn(`Row ${index + 1}: Missing datetime value, skipping`);
+                return;
+              }
 
-            const trade = {
-              datetime: new Date(datetimeVal as string).toISOString(),
-              symbol: (getVal(row, 'symbol') || row.Symbol)?.toString().trim().toUpperCase(),
-              side: (getVal(row, 'side') || row.Side)?.toString().trim().toUpperCase(),
-              qty: safeParseFloat(getVal(row, 'qty') ?? row.Qty ?? row.Quantity),
-              price: safeParseFloat(getVal(row, 'price') ?? row.Price),
-              pnl: safeParseFloat(getVal(row, 'pnl') ?? row.PnL ?? row['P/L'] ?? row.NetPL),
-              notes: (getVal(row, 'notes') || row.Notes || '') as string
-            };
+              const trade = {
+                datetime: new Date(datetimeVal as string).toISOString(),
+                symbol: (getVal(row, 'symbol') || row.Symbol || row.Instrument)?.toString().trim().toUpperCase() || null,
+                side: (getVal(row, 'side') || row.Side || row.Action || row.Type)?.toString().trim().toUpperCase() || null,
+                qty: safeParseFloat(getVal(row, 'qty') || row.Qty || row.Quantity || row.Size),
+                price: safeParseFloat(getVal(row, 'price') || row.Price || row.EntryPrice || row.ExitPrice),
+                pnl: safeParseFloat(getVal(row, 'pnl') || row.PnL || row['P/L'] || row.NetPL || row.Profit || row.Loss),
+                notes: ((getVal(row, 'notes') || row.Notes || row.Comment || '') as string).trim() || null
+              };
 
-            const key = createCompositeKey(trade);
-            if (!unique[key]) unique[key] = trade;
+              // Skip rows with invalid or mock data
+              if (isMockData(trade)) {
+                console.warn(`Row ${index + 1}: Detected mock data, skipping`);
+                return;
+              }
+
+              // Skip rows with no meaningful data
+              if (!trade.symbol || (trade.pnl === 0 && trade.qty === 0 && trade.price === 0)) {
+                console.warn(`Row ${index + 1}: No meaningful trade data, skipping`);
+                return;
+              }
+
+              parsedTrades.push(trade);
+            } catch (error) {
+              console.error(`Error parsing row ${index + 1}:`, error);
+            }
           });
 
-          const tradesToProcess = Object.values(unique);
-          const totalParsedRows = tradesToProcess.length;
-          if (!totalParsedRows) {
-            throw new Error('No valid trades found. Check column names (datetime, symbol, pnl).');
+          /* ------------ Remove duplicates in parsed data ------------ */
+          const uniqueTrades: Record<string, typeof parsedTrades[0]> = {};
+          const internalDuplicates: typeof parsedTrades = [];
+
+          parsedTrades.forEach((trade) => {
+            const key = createCompositeKey(trade);
+            if (uniqueTrades[key]) {
+              internalDuplicates.push(trade);
+            } else {
+              uniqueTrades[key] = trade;
+            }
+          });
+
+          const tradesToProcess = Object.values(uniqueTrades);
+          const totalParsedRows = parsedTrades.length;
+          
+          if (!tradesToProcess.length) {
+            throw new Error('No valid trades found. Check your CSV format and ensure it contains trading data.');
           }
 
-          /* ------------ Remove any mock/demo data ------------ */
+          console.log(`Parsed ${totalParsedRows} rows, found ${tradesToProcess.length} unique trades, ${internalDuplicates.length} internal duplicates`);
+
+          /* ------------ Remove existing mock/demo data from database ------------ */
           setLoadingMessage('Removing mock data...');
-          const mockSymbols = ['AAPL', 'TSLA', 'GOOG', 'META', 'NVDA', 'AMZN', 'MSFT'];
+          const mockSymbols = ['AAPL', 'TSLA', 'GOOG', 'GOOGL', 'META', 'NVDA', 'AMZN', 'MSFT', 'DEMO', 'TEST', 'SAMPLE'];
           await supabase
             .from('trades')
             .delete()
@@ -186,14 +259,15 @@ export const useProcessCsv = (journal: Journal) => {
 
           /* ------------ Fetch existing trades for duplicate check ------------ */
           setLoadingMessage('Checking for duplicate trades...');
-          const existingTrades: {
+          const existingTrades: Array<{
             datetime: string;
             symbol: string | null;
             side: string | null;
             qty: number | null;
             price: number | null;
             pnl: number | null;
-          }[] = [];
+          }> = [];
+
           const pageSize = 1000;
           for (let from = 0; ; from += pageSize) {
             const { data, error } = await supabase
@@ -201,12 +275,15 @@ export const useProcessCsv = (journal: Journal) => {
               .select('datetime, symbol, side, qty, price, pnl')
               .eq('journal_id', journal.id)
               .range(from, from + pageSize - 1);
+            
             if (error) throw error;
             if (!data?.length) break;
+            
             existingTrades.push(...data);
             if (data.length < pageSize) break;
           }
 
+          /* ------------ Create existing keys set for comparison ------------ */
           const existingKeys = new Set(
             existingTrades.map((t) =>
               createCompositeKey({
@@ -221,6 +298,7 @@ export const useProcessCsv = (journal: Journal) => {
             )
           );
 
+          /* ------------ Separate new trades from duplicates ------------ */
           const newTrades: typeof tradesToProcess = [];
           const duplicateEntries: UploadSummary['duplicateEntries'] = [];
 
@@ -242,27 +320,40 @@ export const useProcessCsv = (journal: Journal) => {
 
           const uploadSummary: UploadSummary = {
             totalRows: totalParsedRows,
-            duplicatesSkipped: duplicateEntries.length,
+            duplicatesSkipped: duplicateEntries.length + internalDuplicates.length,
             newEntriesInserted: newTrades.length,
             fileName: file.name,
             uploadTimestamp,
             duplicateEntries
           };
 
-          /* ------------ If nothing new, just log & notify ------------ */
+          console.log('Upload Summary:', uploadSummary);
+
+          /* ------------ Handle case with no new trades ------------ */
           if (!newTrades.length) {
             await supabase.from('raw_trade_data').insert({
               user_id: user.id,
               file_name: file.name,
               headers: csvHeaders,
               data: JSON.parse(
-                JSON.stringify({ mapping: headerMapping, rows: results.data.slice(0, 10), uploadSummary })
+                JSON.stringify({ 
+                  mapping: headerMapping, 
+                  rows: results.data.slice(0, 10), 
+                  uploadSummary 
+                })
               )
             });
+
+            const duplicateMessage = uploadSummary.duplicatesSkipped > 0 
+              ? `All ${uploadSummary.duplicatesSkipped} entries already exist in your journal.`
+              : 'No valid new trades found in the uploaded file.';
+
             toast({
               title: 'No New Trades',
-              description: `All ${totalParsedRows} entries already exist.`
+              description: duplicateMessage,
+              variant: 'destructive'
             });
+            
             setLoadingMessage('');
             return;
           }
@@ -275,13 +366,18 @@ export const useProcessCsv = (journal: Journal) => {
               user_id: user.id,
               file_name: file.name,
               headers: csvHeaders,
-              data: JSON.parse(JSON.stringify({ mapping: headerMapping, rows: results.data, uploadSummary }))
+              data: JSON.parse(JSON.stringify({ 
+                mapping: headerMapping, 
+                rows: results.data, 
+                uploadSummary 
+              }))
             })
             .select()
             .single();
+          
           if (rawError) throw rawError;
 
-          /* ------------ Metrics & session ------------ */
+          /* ------------ Calculate metrics & create session ------------ */
           setLoadingMessage('Calculating trade metrics...');
           const metrics = calculateMetrics(newTrades as Trade[]);
 
@@ -295,6 +391,7 @@ export const useProcessCsv = (journal: Journal) => {
             })
             .select()
             .single();
+          
           if (sessionError) throw sessionError;
 
           /* ------------ Insert new trades ------------ */
@@ -305,6 +402,7 @@ export const useProcessCsv = (journal: Journal) => {
             user_id: user.id,
             journal_id: journal.id
           }));
+          
           const { error: tradesError } = await supabase.from('trades').insert(tradesData);
           if (tradesError) throw tradesError;
 
@@ -314,6 +412,7 @@ export const useProcessCsv = (journal: Journal) => {
             const { data: insights, error: insightsError } = await supabase.functions.invoke<
               Partial<Tables<'trade_sessions'>>
             >('analyze-trades', { body: { trades: tradesData.slice(0, 100) } });
+            
             if (!insightsError && insights) {
               await supabase.from('trade_sessions').update(insights).eq('id', newSession.id);
             }
@@ -321,24 +420,46 @@ export const useProcessCsv = (journal: Journal) => {
             console.warn('AI insights failed:', err);
           }
 
+          /* ------------ Show success notification with duplicate info ------------ */
+          const successMessage = uploadSummary.duplicatesSkipped > 0
+            ? `Successfully inserted ${uploadSummary.newEntriesInserted} new trades. ${uploadSummary.duplicatesSkipped} duplicates were skipped.`
+            : `Successfully inserted ${uploadSummary.newEntriesInserted} trades.`;
+
           toast({
             title: 'Upload Complete!',
-            description:
-              uploadSummary.duplicatesSkipped > 0
-                ? `Inserted ${uploadSummary.newEntriesInserted} new trades, skipped ${uploadSummary.duplicatesSkipped} duplicates.`
-                : `Inserted ${uploadSummary.newEntriesInserted} trades successfully.`
+            description: successMessage
           });
+
+          // Show additional notification for duplicates if any
+          if (uploadSummary.duplicatesSkipped > 0) {
+            setTimeout(() => {
+              toast({
+                title: 'Duplicate Trades Found',
+                description: `${uploadSummary.duplicatesSkipped} duplicate trades were identified and skipped to prevent data duplication.`,
+                variant: 'default'
+              });
+            }, 2000);
+          }
 
           setLoadingMessage('');
           window.location.reload();
         } catch (err) {
           console.error('Error processing CSV:', err);
-          toast({ title: 'Upload Error', description: (err as Error).message, variant: 'destructive' });
+          toast({ 
+            title: 'Upload Error', 
+            description: (err as Error).message, 
+            variant: 'destructive' 
+          });
           setLoadingMessage('');
         }
       },
       error: (error) => {
-        toast({ title: 'CSV Parsing Error', description: error.message, variant: 'destructive' });
+        console.error('CSV parsing error:', error);
+        toast({ 
+          title: 'CSV Parsing Error', 
+          description: error.message, 
+          variant: 'destructive' 
+        });
         setLoadingMessage('');
       }
     });
