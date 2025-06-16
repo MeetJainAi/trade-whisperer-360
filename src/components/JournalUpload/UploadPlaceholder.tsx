@@ -19,7 +19,11 @@ const UploadPlaceholder = ({ loadingMessage, onFileUpload }: UploadPlaceholderPr
   };
 
   return (
-    <label className="block cursor-pointer border-2 border-dashed border-slate-300 rounded-lg p-12 text-center transition-colors hover:border-blue-400 disabled:cursor-not-allowed" disabled={!!loadingMessage}>
+    <label
+      className={
+        `block cursor-pointer border-2 border-dashed border-slate-300 rounded-lg p-12 text-center transition-colors hover:border-blue-400 ${loadingMessage ? 'pointer-events-none opacity-50' : ''}`
+      }
+    >
       <input
         type="file"
         onChange={handleFileChange}
