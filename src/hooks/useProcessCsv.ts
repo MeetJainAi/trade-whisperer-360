@@ -1,3 +1,4 @@
+
 import { useState } from 'react';
 import Papa from 'papaparse';
 import { supabase } from '@/integrations/supabase/client';
@@ -13,6 +14,22 @@ interface CsvRow {
   [key: string]: string | number | undefined;
 }
 
+interface UploadSummary {
+  totalRows: number;
+  duplicatesSkipped: number;
+  newEntriesInserted: number;
+  fileName: string;
+  uploadTimestamp: string;
+  duplicateEntries: Array<{
+    datetime: string;
+    symbol: string;
+    side: string;
+    qty: number;
+    price: number;
+    pnl: number;
+  }>;
+}
+
 const safeParseFloat = (value: unknown): number => {
   if (typeof value === 'number') return value;
   if (typeof value === 'string') {
@@ -20,6 +37,10 @@ const safeParseFloat = (value: unknown): number => {
     return isNaN(parsed) ? 0 : parsed;
   }
   return 0;
+};
+
+const createCompositeKey = (trade: Omit<TablesInsert<'trades'>, 'user_id' | 'journal_id' | 'session_id'>): string => {
+  return `${trade.datetime}|${trade.symbol}|${trade.side}|${trade.qty}|${trade.price}|${trade.pnl}`;
 };
 
 export const useProcessCsv = (journal: Journal) => {
@@ -31,6 +52,9 @@ export const useProcessCsv = (journal: Journal) => {
       toast({ title: "Error", description: "You must be logged in and have a journal selected.", variant: "destructive" });
       return;
     }
+
+    const uploadTimestamp = new Date().toISOString();
+    console.log(`Starting CSV upload for file: ${file.name} at ${uploadTimestamp}`);
 
     setLoadingMessage('Parsing CSV file...');
     const text = await file.text();
@@ -85,7 +109,8 @@ export const useProcessCsv = (journal: Journal) => {
             return row[key] ?? (header ? row[header] : undefined);
           };
 
-          // Deduplicate trades
+          // Parse and deduplicate trades from CSV
+          setLoadingMessage('Processing trade data...');
           const unique: Record<string, Omit<TablesInsert<'trades'>, 'user_id' | 'journal_id' | 'session_id'>> = {};
           results.data.forEach((row) => {
             const datetimeVal = getVal(row, 'datetime') || row.Timestamp || row.Time;
@@ -101,54 +126,131 @@ export const useProcessCsv = (journal: Journal) => {
               notes: (getVal(row, 'notes') || row.Notes || '') as string,
             };
 
-            const key = `${trade.datetime}|${trade.symbol}|${trade.side}|${trade.qty}|${trade.price}|${trade.pnl}`;
+            const key = createCompositeKey(trade);
             if (!unique[key]) unique[key] = trade;
           });
 
-          let tradesToInsert = Object.values(unique);
+          let tradesToProcess = Object.values(unique);
+          const totalParsedRows = tradesToProcess.length;
 
-          if (tradesToInsert.length === 0) {
+          if (tradesToProcess.length === 0) {
             throw new Error("No valid trades found in the CSV file. Please check column names (e.g., datetime, symbol, pnl).");
           }
 
-          const datetimes = tradesToInsert.map(t => t.datetime);
+          console.log(`Parsed ${totalParsedRows} unique trades from CSV`);
+
+          // Check for existing trades in database
+          setLoadingMessage('Checking for duplicate trades...');
+          const datetimes = tradesToProcess.map(t => t.datetime);
           const { data: existing, error: existingError } = await supabase
             .from('trades')
-            .select('id, datetime, symbol, side, qty, price, pnl')
+            .select('datetime, symbol, side, qty, price, pnl')
             .eq('journal_id', journal.id)
             .in('datetime', datetimes);
+
           if (existingError) throw existingError;
 
+          // Create set of existing trade keys for faster lookup
           const existingKeys = new Set(
-            (existing ?? []).map(t => `${t.datetime}|${t.symbol}|${t.side}|${t.qty}|${t.price}|${t.pnl}`)
-          );
-          tradesToInsert = tradesToInsert.filter(
-            t => !existingKeys.has(`${t.datetime}|${t.symbol}|${t.side}|${t.qty}|${t.price}|${t.pnl}`)
+            (existing ?? []).map(t => createCompositeKey({
+              datetime: t.datetime,
+              symbol: t.symbol,
+              side: t.side,
+              qty: t.qty,
+              price: t.price,
+              pnl: t.pnl,
+              notes: null
+            }))
           );
 
-          if (tradesToInsert.length === 0) {
-            toast({ title: "No New Trades", description: "All trades in this CSV already exist for this account." });
+          // Separate new trades from duplicates
+          const newTrades: typeof tradesToProcess = [];
+          const duplicateEntries: UploadSummary['duplicateEntries'] = [];
+
+          tradesToProcess.forEach(trade => {
+            const key = createCompositeKey(trade);
+            if (existingKeys.has(key)) {
+              duplicateEntries.push({
+                datetime: trade.datetime,
+                symbol: trade.symbol || '',
+                side: trade.side || '',
+                qty: trade.qty || 0,
+                price: trade.price || 0,
+                pnl: trade.pnl || 0
+              });
+            } else {
+              newTrades.push(trade);
+            }
+          });
+
+          const duplicatesSkipped = duplicateEntries.length;
+          const newEntriesCount = newTrades.length;
+
+          console.log(`Upload summary: ${totalParsedRows} total, ${duplicatesSkipped} duplicates, ${newEntriesCount} new`);
+
+          // Handle case where all trades are duplicates
+          if (newTrades.length === 0) {
+            const uploadSummary: UploadSummary = {
+              totalRows: totalParsedRows,
+              duplicatesSkipped,
+              newEntriesInserted: 0,
+              fileName: file.name,
+              uploadTimestamp,
+              duplicateEntries
+            };
+
+            // Log the upload attempt
+            await supabase.from('raw_trade_data').insert({
+              user_id: user.id,
+              file_name: file.name,
+              headers: csvHeaders,
+              data: { 
+                mapping: headerMapping, 
+                rows: results.data.slice(0, 10), // Store first 10 rows for reference
+                uploadSummary 
+              },
+            });
+
+            console.log('All trades were duplicates:', uploadSummary);
+            toast({ 
+              title: "No New Trades", 
+              description: `All ${totalParsedRows} entries already exist for this journal. No duplicates were added.`
+            });
             setLoadingMessage('');
             return;
           }
 
-          // Save raw file
-          setLoadingMessage('Saving raw file...');
+          // Save raw file data
+          setLoadingMessage('Saving raw file data...');
+          const uploadSummary: UploadSummary = {
+            totalRows: totalParsedRows,
+            duplicatesSkipped,
+            newEntriesInserted: newEntriesCount,
+            fileName: file.name,
+            uploadTimestamp,
+            duplicateEntries
+          };
+
           const { data: rawData, error: rawError } = await supabase
             .from('raw_trade_data')
             .insert({
               user_id: user.id,
               file_name: file.name,
               headers: csvHeaders,
-              data: { mapping: headerMapping, rows: results.data },
+              data: { 
+                mapping: headerMapping, 
+                rows: results.data,
+                uploadSummary
+              },
             })
             .select()
             .single();
+
           if (rawError) throw rawError;
 
-          // Metrics and session
+          // Calculate metrics for new trades only
           setLoadingMessage('Calculating trade metrics...');
-          const metrics = calculateMetrics(tradesToInsert as Trade[]);
+          const metrics = calculateMetrics(newTrades as Trade[]);
 
           setLoadingMessage('Creating new trade session...');
           const sessionData = {
@@ -176,9 +278,9 @@ export const useProcessCsv = (journal: Journal) => {
 
           if (sessionError) throw sessionError;
 
-          // Insert trades
-          setLoadingMessage(`Inserting ${tradesToInsert.length} trades...`);
-          const tradesData = tradesToInsert.map(trade => ({
+          // Insert new trades
+          setLoadingMessage(`Inserting ${newTrades.length} new trades...`);
+          const tradesData = newTrades.map(trade => ({
             ...trade,
             session_id: newSession.id,
             user_id: user.id,
@@ -188,7 +290,7 @@ export const useProcessCsv = (journal: Journal) => {
           const { error: tradesError } = await supabase.from('trades').insert(tradesData);
           if (tradesError) throw tradesError;
 
-          // Generate AI insights
+          // Generate AI insights for new trades
           try {
             setLoadingMessage('Generating AI insights...');
             const { data: insights, error: insightsError } = await supabase.functions.invoke<
@@ -203,7 +305,19 @@ export const useProcessCsv = (journal: Journal) => {
             console.warn('Failed to generate AI insights:', err);
           }
 
-          toast({ title: "Success!", description: "CSV data uploaded and analyzed." });
+          // Log successful upload summary
+          console.log('Upload completed successfully:', uploadSummary);
+          
+          // Show success message with summary
+          const summaryMessage = duplicatesSkipped > 0 
+            ? `Successfully uploaded ${newEntriesCount} new trades. ${duplicatesSkipped} duplicate entries were skipped.`
+            : `Successfully uploaded ${newEntriesCount} trades.`;
+
+          toast({ 
+            title: "Upload Complete!", 
+            description: summaryMessage 
+          });
+          
           setLoadingMessage('');
           window.location.reload();
 
