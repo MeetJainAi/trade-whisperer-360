@@ -35,32 +35,62 @@ const safeParseFloat = (value: unknown): number => {
   if (typeof value === 'number') return value;
   if (typeof value === 'string') {
     let cleanValue = value.trim();
-    
+
     // Handle parentheses for negative values: (12.50) -> -12.50
     if (cleanValue.startsWith('(') && cleanValue.endsWith(')')) {
       cleanValue = '-' + cleanValue.slice(1, -1);
     }
-    
+
+    // Handle trailing negative sign: 12.50- -> -12.50
+    if (cleanValue.endsWith('-')) {
+      cleanValue = '-' + cleanValue.slice(0, -1);
+    }
+
+    // Remove any currency symbols or spaces
+    cleanValue = cleanValue.replace(/[$,\s]+/g, '');
+
     // Remove all non-numeric characters except dots and negative signs
-    cleanValue = cleanValue.replace(/[^0-9.-]+/g, "");
-    
-    // Handle multiple negative signs or dots
+    cleanValue = cleanValue.replace(/[^0-9.-]+/g, '');
+
+    // Normalize multiple negative signs by keeping only the leading one
+    const isNegative = cleanValue.includes('-');
+    cleanValue = cleanValue.replace(/-/g, '');
+    if (isNegative) {
+      cleanValue = '-' + cleanValue;
+    }
+
+    // Handle multiple dots
     const parts = cleanValue.split('.');
     if (parts.length > 2) {
       cleanValue = parts[0] + '.' + parts.slice(1).join('');
     }
-    
+
     const parsed = parseFloat(cleanValue);
     return isNaN(parsed) ? 0 : parsed;
   }
   return 0;
 };
 
-const createCompositeKey = (trade: Omit<TablesInsert<'trades'>, 'user_id' | 'journal_id' | 'session_id'>): string => {
-  // Normalize the datetime to ensure consistent comparison
-  const normalizedDatetime = new Date(trade.datetime).toISOString();
-  // Fixed the bug: use trade.price instead of trade.pnl for price field
-  return `${normalizedDatetime}|${trade.symbol}|${trade.side}|${trade.qty}|${trade.price}|${trade.pnl}`;
+const createCompositeKey = (
+  trade: Omit<TablesInsert<'trades'>, 'user_id' | 'journal_id' | 'session_id'>
+): string => {
+  // Use epoch time for consistent datetime comparison
+  const epochTime = new Date(trade.datetime).getTime();
+
+  const symbol = trade.symbol ? trade.symbol.toUpperCase().trim() : '';
+  const side = trade.side ? trade.side.toUpperCase().trim() : '';
+
+  const fmt = (n: number | null | undefined) =>
+    n === null || n === undefined ? '' : Number(n).toFixed(8);
+
+  return [
+    epochTime,
+    symbol,
+    side,
+    fmt(trade.qty),
+    fmt(trade.price),
+    fmt(trade.pnl)
+  ].join('|');
 };
 
 export const useProcessCsv = (journal: Journal) => {
@@ -138,8 +168,8 @@ export const useProcessCsv = (journal: Journal) => {
 
             const trade = {
               datetime: new Date(datetimeVal as string).toISOString(),
-              symbol: (getVal(row, 'symbol') || row.Symbol) as string | undefined,
-              side: (getVal(row, 'side') || row.Side) as string | undefined,
+              symbol: ((getVal(row, 'symbol') || row.Symbol) as string | undefined)?.toString().trim().toUpperCase(),
+              side: ((getVal(row, 'side') || row.Side) as string | undefined)?.toString().trim().toUpperCase(),
               qty: safeParseFloat(getVal(row, 'qty') ?? row.Qty ?? row.Quantity),
               price: safeParseFloat(getVal(row, 'price') ?? row.Price),
               pnl: safeParseFloat(getVal(row, 'pnl') ?? row.PnL ?? row['P/L'] ?? row.NetPL),
@@ -150,7 +180,7 @@ export const useProcessCsv = (journal: Journal) => {
             if (!unique[key]) unique[key] = trade;
           });
 
-          let tradesToProcess = Object.values(unique);
+          const tradesToProcess = Object.values(unique);
           const totalParsedRows = tradesToProcess.length;
 
           if (tradesToProcess.length === 0) {
@@ -163,13 +193,12 @@ export const useProcessCsv = (journal: Journal) => {
           setLoadingMessage('Removing mock data...');
           const mockSymbols = ['AAPL', 'TSLA', 'GOOG', 'META', 'NVDA', 'AMZN', 'MSFT'];
           
-          // More precise mock data removal - only remove if notes contain "Mock trade"
+          // Remove any existing mock trades for this journal
           const { error: deleteMockError } = await supabase
             .from('trades')
             .delete()
             .eq('journal_id', journal.id)
-            .in('symbol', mockSymbols)
-            .like('notes', '%Mock trade%');
+            .in('symbol', mockSymbols);
 
           if (deleteMockError) {
             console.warn('Failed to delete mock trades:', deleteMockError);
@@ -181,19 +210,34 @@ export const useProcessCsv = (journal: Journal) => {
           setLoadingMessage('Checking for duplicate trades...');
           
           // Get all existing trades for this journal to check for duplicates
-          const { data: existingTrades, error: existingError } = await supabase
-            .from('trades')
-            .select('datetime, symbol, side, qty, price, pnl')
-            .eq('journal_id', journal.id);
-
-          if (existingError) throw existingError;
+          const existingTrades: Array<{
+            datetime: string
+            symbol: string | null
+            side: string | null
+            qty: number | null
+            price: number | null
+            pnl: number | null
+          }> = [];
+          const pageSize = 1000;
+          let from = 0;
+          while (true) {
+            const { data, error } = await supabase
+              .from('trades')
+              .select('datetime, symbol, side, qty, price, pnl')
+              .eq('journal_id', journal.id)
+              .range(from, from + pageSize - 1);
+            if (error) throw error;
+            if (data) existingTrades.push(...data);
+            if (!data || data.length < pageSize) break;
+            from += pageSize;
+          }
 
           // Create set of existing trade keys for faster lookup
           const existingKeys = new Set(
-            (existingTrades ?? []).map(t => createCompositeKey({
+            existingTrades.map(t => createCompositeKey({
               datetime: t.datetime,
-              symbol: t.symbol,
-              side: t.side,
+              symbol: t.symbol ? t.symbol.toUpperCase().trim() : null,
+              side: t.side ? t.side.toUpperCase().trim() : null,
               qty: t.qty,
               price: t.price,
               pnl: t.pnl,
