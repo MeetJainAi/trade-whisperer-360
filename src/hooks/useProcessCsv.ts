@@ -14,6 +14,7 @@ interface CsvRow {
   [key: string]: string | number | undefined;
 }
 
+// Make UploadSummary compatible with Json type by making it serializable
 interface UploadSummary {
   totalRows: number;
   duplicatesSkipped: number;
@@ -199,17 +200,19 @@ export const useProcessCsv = (journal: Journal) => {
               duplicateEntries
             };
 
-            // Log the upload attempt
-            await supabase.from('raw_trade_data').insert({
+            // Log the upload attempt - serialize the data properly for Json type
+            const rawDataToInsert = {
               user_id: user.id,
               file_name: file.name,
               headers: csvHeaders,
-              data: { 
+              data: JSON.parse(JSON.stringify({ 
                 mapping: headerMapping, 
                 rows: results.data.slice(0, 10), // Store first 10 rows for reference
                 uploadSummary 
-              },
-            });
+              }))
+            };
+
+            await supabase.from('raw_trade_data').insert(rawDataToInsert);
 
             console.log('All trades were duplicates:', uploadSummary);
             toast({ 
@@ -231,18 +234,21 @@ export const useProcessCsv = (journal: Journal) => {
             duplicateEntries
           };
 
+          // Serialize the data properly for Json type
+          const rawDataToInsert = {
+            user_id: user.id,
+            file_name: file.name,
+            headers: csvHeaders,
+            data: JSON.parse(JSON.stringify({ 
+              mapping: headerMapping, 
+              rows: results.data,
+              uploadSummary
+            }))
+          };
+
           const { data: rawData, error: rawError } = await supabase
             .from('raw_trade_data')
-            .insert({
-              user_id: user.id,
-              file_name: file.name,
-              headers: csvHeaders,
-              data: { 
-                mapping: headerMapping, 
-                rows: results.data,
-                uploadSummary
-              },
-            })
+            .insert(rawDataToInsert)
             .select()
             .single();
 

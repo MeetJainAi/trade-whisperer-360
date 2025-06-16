@@ -18,14 +18,16 @@ const UploadPlaceholder = ({ loadingMessage, onFileUpload }: UploadPlaceholderPr
     }
   };
 
+  const isDisabled = !!loadingMessage;
+
   return (
-    <label className="block cursor-pointer border-2 border-dashed border-slate-300 rounded-lg p-12 text-center transition-colors hover:border-blue-400 disabled:cursor-not-allowed" disabled={!!loadingMessage}>
+    <label className={`block cursor-pointer border-2 border-dashed border-slate-300 rounded-lg p-12 text-center transition-colors hover:border-blue-400 ${isDisabled ? 'cursor-not-allowed opacity-60' : ''}`}>
       <input
         type="file"
         onChange={handleFileChange}
         className="hidden"
         accept=".csv, text/csv"
-        disabled={!!loadingMessage}
+        disabled={isDisabled}
       />
       {loadingMessage ? (
         <Loader2 className="w-12 h-12 text-slate-400 mx-auto mb-4 animate-spin" />
@@ -43,4 +45,3 @@ const UploadPlaceholder = ({ loadingMessage, onFileUpload }: UploadPlaceholderPr
 };
 
 export default UploadPlaceholder;
-
