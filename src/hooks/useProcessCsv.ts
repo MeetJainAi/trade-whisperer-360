@@ -38,31 +38,67 @@ export const useProcessCsv = (journal: Journal) => {
             complete: async (results) => {
                 try {
                     setLoadingMessage('Validating CSV data...');
-                    
+
                     if (results.errors.length > 0) {
                         console.error("CSV parsing errors:", results.errors);
                         throw new Error(`CSV parsing error on row ${results.errors[0].row}: ${results.errors[0].message}`);
                     }
 
-                    const tradesToInsert: Omit<TablesInsert<'trades'>, 'user_id' | 'journal_id' | 'session_id'>[] = (results.data as any[])
+                    const csvHeaders = results.meta?.fields || [];
+                    const csvDataSample = (results.data as any[]).slice(0, 3);
+                    let headerMapping: Record<string, string> = {};
+
+                    try {
+                        setLoadingMessage('Mapping CSV columns...');
+                        const { data: mappingData, error: mappingError } = await supabase.functions.invoke('map-columns-with-gemini', {
+                            body: { csvHeaders, csvDataSample },
+                        });
+                        if (mappingError) throw mappingError;
+                        headerMapping = (mappingData as any)?.mapping || {};
+                    } catch (err) {
+                        console.warn('Column mapping failed, using best-effort mapping.', err);
+                    }
+
+                    const getVal = (row: any, key: string) => {
+                        const header = headerMapping[key];
+                        return row[key] ?? (header ? row[header] : undefined);
+                    };
+
+                    let tradesToInsert: Omit<TablesInsert<'trades'>, 'user_id' | 'journal_id' | 'session_id'>[] = (results.data as any[])
                         .map((row: any) => {
-                            const datetime = row.datetime || row.Timestamp || row.Time;
-                            if (!datetime) return null; // Skip rows without a datetime
+                            const datetimeVal = getVal(row, 'datetime') || row.Timestamp || row.Time;
+                            if (!datetimeVal) return null; // Skip rows without a datetime
 
                             return {
-                                datetime: new Date(datetime).toISOString(),
-                                symbol: row.symbol || row.Symbol,
-                                side: row.side || row.Side,
-                                qty: safeParseFloat(row.qty || row.Qty || row.Quantity),
-                                price: safeParseFloat(row.price || row.Price),
-                                pnl: safeParseFloat(row.pnl || row.PnL || row['P/L'] || row.NetPL),
-                                notes: row.notes || row.Notes || '',
+                                datetime: new Date(datetimeVal).toISOString(),
+                                symbol: getVal(row, 'symbol') || row.Symbol,
+                                side: getVal(row, 'side') || row.Side,
+                                qty: safeParseFloat(getVal(row, 'qty') ?? row.Qty ?? row.Quantity),
+                                price: safeParseFloat(getVal(row, 'price') ?? row.Price),
+                                pnl: safeParseFloat(getVal(row, 'pnl') ?? row.PnL ?? row['P/L'] ?? row.NetPL),
+                                notes: (getVal(row, 'notes') || row.Notes || '') as string,
                             };
                         })
                         .filter(Boolean) as Omit<TablesInsert<'trades'>, 'user_id' | 'journal_id' | 'session_id'>[];
 
                     if (tradesToInsert.length === 0) {
                         throw new Error("No valid trades found in the CSV file. Please check column names (e.g., datetime, symbol, pnl).");
+                    }
+
+                    const datetimes = tradesToInsert.map(t => t.datetime);
+                    const { data: existing, error: existingError } = await supabase
+                        .from('trades')
+                        .select('datetime')
+                        .eq('journal_id', journal.id)
+                        .in('datetime', datetimes);
+                    if (existingError) throw existingError;
+                    const existingSet = new Set(existing?.map(t => t.datetime));
+                    tradesToInsert = tradesToInsert.filter(t => !existingSet.has(t.datetime));
+
+                    if (tradesToInsert.length === 0) {
+                        toast({ title: "No New Trades", description: "All trades in this CSV already exist for this account." });
+                        setLoadingMessage('');
+                        return;
                     }
 
                     setLoadingMessage('Calculating trade metrics...');
