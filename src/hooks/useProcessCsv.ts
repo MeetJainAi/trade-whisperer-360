@@ -59,6 +59,7 @@ const safeParseFloat = (value: unknown): number => {
 const createCompositeKey = (trade: Omit<TablesInsert<'trades'>, 'user_id' | 'journal_id' | 'session_id'>): string => {
   // Normalize the datetime to ensure consistent comparison
   const normalizedDatetime = new Date(trade.datetime).toISOString();
+  // Fixed the bug: use trade.price instead of trade.pnl for price field
   return `${normalizedDatetime}|${trade.symbol}|${trade.side}|${trade.qty}|${trade.price}|${trade.pnl}`;
 };
 
@@ -162,12 +163,13 @@ export const useProcessCsv = (journal: Journal) => {
           setLoadingMessage('Removing mock data...');
           const mockSymbols = ['AAPL', 'TSLA', 'GOOG', 'META', 'NVDA', 'AMZN', 'MSFT'];
           
-          // Delete existing mock trades from this journal
+          // More precise mock data removal - only remove if notes contain "Mock trade"
           const { error: deleteMockError } = await supabase
             .from('trades')
             .delete()
             .eq('journal_id', journal.id)
-            .in('symbol', mockSymbols);
+            .in('symbol', mockSymbols)
+            .like('notes', '%Mock trade%');
 
           if (deleteMockError) {
             console.warn('Failed to delete mock trades:', deleteMockError);
@@ -193,7 +195,7 @@ export const useProcessCsv = (journal: Journal) => {
               symbol: t.symbol,
               side: t.side,
               qty: t.qty,
-              price: t.pnl,
+              price: t.price,
               pnl: t.pnl,
               notes: null
             }))
