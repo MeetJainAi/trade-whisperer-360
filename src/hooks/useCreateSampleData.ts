@@ -11,10 +11,11 @@ export const useCreateSampleData = (journal: Tables<'journals'>) => {
 
   const createSampleData = async () => {
     console.log('Using sample data...');
+    // Use clearly identifiable mock symbols
     const sampleTrades = [
-        { datetime: '2024-01-15 09:30:00', symbol: 'AAPL', side: 'BUY', qty: 100, price: 150.25, pnl: 45.00, notes: 'Breakout' },
-        { datetime: '2024-01-15 10:15:00', symbol: 'TSLA', side: 'SELL', qty: 50, price: 245.80, pnl: -30.00, notes: 'Stop loss hit' },
-        { datetime: '2024-01-15 11:00:00', symbol: 'GOOG', side: 'BUY', qty: 20, price: 140.00, pnl: 55.00, notes: '' },
+        { datetime: '2024-01-15 09:30:00', symbol: 'AAPL', side: 'BUY', qty: 100, price: 150.25, pnl: 45.00, notes: 'Mock trade - Breakout' },
+        { datetime: '2024-01-15 10:15:00', symbol: 'TSLA', side: 'SELL', qty: 50, price: 245.80, pnl: -30.00, notes: 'Mock trade - Stop loss hit' },
+        { datetime: '2024-01-15 11:00:00', symbol: 'GOOG', side: 'BUY', qty: 20, price: 140.00, pnl: 55.00, notes: 'Mock trade' },
     ];
     
     if (!user || !journal.id) {

@@ -34,14 +34,32 @@ interface UploadSummary {
 const safeParseFloat = (value: unknown): number => {
   if (typeof value === 'number') return value;
   if (typeof value === 'string') {
-    const parsed = parseFloat(value.replace(/[^0-9.-]+/g, ""));
+    let cleanValue = value.trim();
+    
+    // Handle parentheses for negative values: (12.50) -> -12.50
+    if (cleanValue.startsWith('(') && cleanValue.endsWith(')')) {
+      cleanValue = '-' + cleanValue.slice(1, -1);
+    }
+    
+    // Remove all non-numeric characters except dots and negative signs
+    cleanValue = cleanValue.replace(/[^0-9.-]+/g, "");
+    
+    // Handle multiple negative signs or dots
+    const parts = cleanValue.split('.');
+    if (parts.length > 2) {
+      cleanValue = parts[0] + '.' + parts.slice(1).join('');
+    }
+    
+    const parsed = parseFloat(cleanValue);
     return isNaN(parsed) ? 0 : parsed;
   }
   return 0;
 };
 
 const createCompositeKey = (trade: Omit<TablesInsert<'trades'>, 'user_id' | 'journal_id' | 'session_id'>): string => {
-  return `${trade.datetime}|${trade.symbol}|${trade.side}|${trade.qty}|${trade.price}|${trade.pnl}`;
+  // Normalize the datetime to ensure consistent comparison
+  const normalizedDatetime = new Date(trade.datetime).toISOString();
+  return `${normalizedDatetime}|${trade.symbol}|${trade.side}|${trade.qty}|${trade.price}|${trade.pnl}`;
 };
 
 export const useProcessCsv = (journal: Journal) => {
@@ -140,29 +158,48 @@ export const useProcessCsv = (journal: Journal) => {
 
           console.log(`Parsed ${totalParsedRows} unique trades from CSV`);
 
-          // Check for existing trades in database
+          // Remove mock data before processing real CSV data
+          setLoadingMessage('Removing mock data...');
+          const mockSymbols = ['AAPL', 'TSLA', 'GOOG', 'META', 'NVDA', 'AMZN', 'MSFT'];
+          
+          // Delete existing mock trades from this journal
+          const { error: deleteMockError } = await supabase
+            .from('trades')
+            .delete()
+            .eq('journal_id', journal.id)
+            .in('symbol', mockSymbols);
+
+          if (deleteMockError) {
+            console.warn('Failed to delete mock trades:', deleteMockError);
+          } else {
+            console.log('Mock trades removed successfully');
+          }
+
+          // Check for existing trades in database using composite key approach
           setLoadingMessage('Checking for duplicate trades...');
-          const datetimes = tradesToProcess.map(t => t.datetime);
-          const { data: existing, error: existingError } = await supabase
+          
+          // Get all existing trades for this journal to check for duplicates
+          const { data: existingTrades, error: existingError } = await supabase
             .from('trades')
             .select('datetime, symbol, side, qty, price, pnl')
-            .eq('journal_id', journal.id)
-            .in('datetime', datetimes);
+            .eq('journal_id', journal.id);
 
           if (existingError) throw existingError;
 
           // Create set of existing trade keys for faster lookup
           const existingKeys = new Set(
-            (existing ?? []).map(t => createCompositeKey({
+            (existingTrades ?? []).map(t => createCompositeKey({
               datetime: t.datetime,
               symbol: t.symbol,
               side: t.side,
               qty: t.qty,
-              price: t.price,
+              price: t.pnl,
               pnl: t.pnl,
               notes: null
             }))
           );
+
+          console.log(`Found ${existingKeys.size} existing trades in database`);
 
           // Separate new trades from duplicates
           const newTrades: typeof tradesToProcess = [];
@@ -179,6 +216,7 @@ export const useProcessCsv = (journal: Journal) => {
                 price: trade.price || 0,
                 pnl: trade.pnl || 0
               });
+              console.log(`Skipping duplicate trade: ${key}`);
             } else {
               newTrades.push(trade);
             }
