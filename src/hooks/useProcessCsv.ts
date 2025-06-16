@@ -107,14 +107,7 @@ export const useProcessCsv = (journal: Journal) => {
 
           const getVal = (row: CsvRow, key: string): string | number | undefined => {
             const header = headerMapping[key];
-                    const initialCount = tradesToInsert.length;
-                    const duplicatesSkipped = initialCount - tradesToInsert.length;
-                            data: {
-                                mapping: headerMapping,
-                                rows: results.data,
-                                duplicatesSkipped,
-                                inserted: tradesToInsert.length,
-                            },
+            return header ? row[header] : undefined;
           };
 
           // Parse and deduplicate trades from CSV
@@ -289,9 +282,7 @@ export const useProcessCsv = (journal: Journal) => {
             .select()
             .single();
 
-                    const summary = `${tradesToInsert.length} new trades inserted` +
-                        (duplicatesSkipped > 0 ? `, ${duplicatesSkipped} duplicates skipped` : '');
-                    toast({ title: "Success!", description: summary });
+          if (sessionError) throw sessionError;
 
           // Insert new trades
           setLoadingMessage(`Inserting ${newTrades.length} new trades...`);
