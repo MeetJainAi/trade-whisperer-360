@@ -20,8 +20,6 @@ interface TradeAnalysisSummary {
   newEntriesInserted: number;
   fileName: string;
   uploadTimestamp: string;
-  missingColumns: string[];
-  dataQualityScore: number;
   duplicateEntries: Array<{
     datetime: string;
     symbol: string;
@@ -30,21 +28,7 @@ interface TradeAnalysisSummary {
     price: number;
     pnl: number;
   }>;
-  psychologicalPatterns: {
-    revengeTrading: boolean;
-    overconfidence: boolean;
-    fearOfMissing: boolean;
-    lossAversion: boolean;
-  };
-  timePatterns: {
-    bestPerformingHours: string[];
-    worstPerformingHours: string[];
-    averageHoldTime: string;
-  };
 }
-
-// Essential columns for trading analysis
-const ESSENTIAL_COLUMNS = ['datetime', 'symbol', 'side', 'qty', 'price', 'pnl'];
 
 /** Enhanced robust float parser handling $, commas, spaces, (neg), trailing -neg, etc. */
 const safeParseFloat = (value: unknown): number => {
@@ -144,127 +128,6 @@ const isMockData = (trade: any): boolean => {
   return false;
 };
 
-/** Analyze psychological patterns in trading data */
-const analyzePsychologicalPatterns = (trades: any[]) => {
-  const patterns = {
-    revengeTrading: false,
-    overconfidence: false,
-    fearOfMissing: false,
-    lossAversion: false
-  };
-
-  if (trades.length < 3) return patterns;
-
-  // Sort trades by datetime
-  const sortedTrades = trades.sort((a, b) => new Date(a.datetime).getTime() - new Date(b.datetime).getTime());
-
-  // Analyze revenge trading: increasing position size after losses
-  let consecutiveLosses = 0;
-  for (let i = 0; i < sortedTrades.length - 1; i++) {
-    const currentTrade = sortedTrades[i];
-    const nextTrade = sortedTrades[i + 1];
-    
-    if (safeParseFloat(currentTrade.pnl) < 0) {
-      consecutiveLosses++;
-      // Check if next trade has significantly larger position size
-      if (consecutiveLosses >= 2 && safeParseFloat(nextTrade.qty) > safeParseFloat(currentTrade.qty) * 1.5) {
-        patterns.revengeTrading = true;
-      }
-    } else {
-      consecutiveLosses = 0;
-    }
-  }
-
-  // Analyze overconfidence: increasing risk after wins
-  let consecutiveWins = 0;
-  for (let i = 0; i < sortedTrades.length - 1; i++) {
-    const currentTrade = sortedTrades[i];
-    const nextTrade = sortedTrades[i + 1];
-    
-    if (safeParseFloat(currentTrade.pnl) > 0) {
-      consecutiveWins++;
-      if (consecutiveWins >= 3 && safeParseFloat(nextTrade.qty) > safeParseFloat(currentTrade.qty) * 1.3) {
-        patterns.overconfidence = true;
-      }
-    } else {
-      consecutiveWins = 0;
-    }
-  }
-
-  // Analyze loss aversion: quick profit taking vs letting losses run
-  const winners = sortedTrades.filter(t => safeParseFloat(t.pnl) > 0);
-  const losers = sortedTrades.filter(t => safeParseFloat(t.pnl) < 0);
-  
-  if (winners.length > 0 && losers.length > 0) {
-    const avgWinSize = winners.reduce((sum, t) => sum + Math.abs(safeParseFloat(t.pnl)), 0) / winners.length;
-    const avgLossSize = losers.reduce((sum, t) => sum + Math.abs(safeParseFloat(t.pnl)), 0) / losers.length;
-    
-    if (avgLossSize > avgWinSize * 1.5) {
-      patterns.lossAversion = true;
-    }
-  }
-
-  return patterns;
-};
-
-/** Analyze time-based trading patterns */
-const analyzeTimePatterns = (trades: any[]) => {
-  const hourlyPnL: { [hour: number]: number[] } = {};
-  
-  trades.forEach(trade => {
-    const hour = new Date(trade.datetime).getHours();
-    const pnl = safeParseFloat(trade.pnl);
-    
-    if (!hourlyPnL[hour]) hourlyPnL[hour] = [];
-    hourlyPnL[hour].push(pnl);
-  });
-
-  const hourlyAverage = Object.entries(hourlyPnL).map(([hour, pnls]) => ({
-    hour: parseInt(hour),
-    avgPnl: pnls.reduce((sum, pnl) => sum + pnl, 0) / pnls.length,
-    count: pnls.length
-  }));
-
-  // Sort by average P&L and filter hours with at least 3 trades
-  const significantHours = hourlyAverage.filter(h => h.count >= 3).sort((a, b) => b.avgPnl - a.avgPnl);
-  
-  const bestHours = significantHours.slice(0, 2).map(h => `${h.hour}:00`);
-  const worstHours = significantHours.slice(-2).map(h => `${h.hour}:00`);
-
-  return {
-    bestPerformingHours: bestHours,
-    worstPerformingHours: worstHours,
-    averageHoldTime: 'N/A' // Could be calculated if we had entry/exit times
-  };
-};
-
-/** Calculate data quality score based on completeness */
-const calculateDataQuality = (trades: any[], headerMapping: Record<string, string>) => {
-  let score = 0;
-  const maxScore = 100;
-
-  // Check for essential columns (60 points)
-  const essentialFound = ESSENTIAL_COLUMNS.filter(col => headerMapping[col]).length;
-  score += (essentialFound / ESSENTIAL_COLUMNS.length) * 60;
-
-  // Check data completeness (40 points)
-  if (trades.length > 0) {
-    const completenessScores = trades.map(trade => {
-      let tradeScore = 0;
-      if (trade.symbol && trade.symbol.trim()) tradeScore += 10;
-      if (trade.datetime && !isNaN(new Date(trade.datetime).getTime())) tradeScore += 10;
-      if (trade.side && (trade.side.toUpperCase() === 'BUY' || trade.side.toUpperCase() === 'SELL')) tradeScore += 10;
-      if (trade.pnl !== undefined && trade.pnl !== null && !isNaN(safeParseFloat(trade.pnl))) tradeScore += 10;
-      return tradeScore;
-    });
-    
-    const avgCompleteness = completenessScores.reduce((sum, s) => sum + s, 0) / completenessScores.length;
-    score += avgCompleteness;
-  }
-
-  return Math.min(score, maxScore);
-};
-
 export const useProcessCsv = (journal: Journal) => {
   const { user } = useAuth();
   const [loadingMessage, setLoadingMessage] = useState('');
@@ -300,52 +163,38 @@ export const useProcessCsv = (journal: Journal) => {
           const csvDataSample = results.data.slice(0, 3);
           let headerMapping: Record<string, string> = {};
 
-          /* ------------ Step 1: Validate if CSV contains trading data ------------ */
-          setLoadingMessage('Validating trading data...');
+          /* ------------ Validate trading CSV ------------ */
+          setLoadingMessage('Validating CSV data...');
           const { data: validationData, error: validationError } = await supabase.functions.invoke<
             { is_trading_related: boolean }
           >('validate-csv-content', { body: { csvHeaders, csvDataSample } });
-          
           if (validationError) throw validationError;
-          
           if (!validationData?.is_trading_related) {
-            throw new Error('The uploaded CSV does not appear to contain trading data. Please ensure your file contains columns like symbol, price, quantity, profit/loss, etc.');
+            throw new Error('The uploaded CSV does not appear to contain trading data.');
           }
 
-          /* ------------ Step 2: Map columns to expected format ------------ */
+          /* ------------ AI column mapping (Gemini) ------------ */
           setLoadingMessage('Mapping CSV columns...');
           const { data: mappingData, error: mappingError } = await supabase.functions.invoke<
             { mapping: Record<string, string> }
           >('map-columns-with-gemini', { body: { csvHeaders, csvDataSample } });
-          
           if (mappingError) throw mappingError;
           headerMapping = mappingData?.mapping || {};
-
-          /* ------------ Step 3: Check for essential columns ------------ */
-          const missingColumns = ESSENTIAL_COLUMNS.filter(col => !headerMapping[col]);
-          if (missingColumns.length > 0) {
-            const missingList = missingColumns.join(', ');
-            throw new Error(
-              `Essential trading columns are missing: ${missingList}. ` +
-              `Please ensure your CSV contains columns for: date/time, symbol/instrument, buy/sell side, quantity, price, and profit/loss.`
-            );
-          }
 
           const getVal = (row: CsvRow, key: string) => {
             const header = headerMapping[key];
             return header ? row[header] : undefined;
           };
 
-          /* ------------ Step 4: Parse and normalize data formats ------------ */
-          setLoadingMessage('Normalizing trade data...');
+          /* ------------ Parse & deduplicate in-memory ------------ */
+          setLoadingMessage('Processing trade data...');
           const parsedTrades: Array<Omit<TablesInsert<'trades'>, 'user_id' | 'journal_id' | 'session_id'>> = [];
-          const skippedRows: Array<{ row: number; reason: string }> = [];
 
           results.data.forEach((row, index) => {
             try {
               const datetimeVal = getVal(row, 'datetime') || row.Timestamp || row.Time || row.Date;
               if (!datetimeVal) {
-                skippedRows.push({ row: index + 1, reason: 'Missing datetime value' });
+                console.warn(`Row ${index + 1}: Missing datetime value, skipping`);
                 return;
               }
 
@@ -359,30 +208,25 @@ export const useProcessCsv = (journal: Journal) => {
                 notes: ((getVal(row, 'notes') || row.Notes || row.Comment || '') as string).trim() || null
               };
 
-              // Skip rows with mock data
+              // Skip rows with invalid or mock data
               if (isMockData(trade)) {
-                skippedRows.push({ row: index + 1, reason: 'Detected mock/demo data' });
+                console.warn(`Row ${index + 1}: Detected mock data, skipping`);
                 return;
               }
 
               // Skip rows with no meaningful data
               if (!trade.symbol || (trade.pnl === 0 && trade.qty === 0 && trade.price === 0)) {
-                skippedRows.push({ row: index + 1, reason: 'No meaningful trade data' });
+                console.warn(`Row ${index + 1}: No meaningful trade data, skipping`);
                 return;
               }
 
               parsedTrades.push(trade);
             } catch (error) {
-              skippedRows.push({ row: index + 1, reason: `Parsing error: ${error.message}` });
+              console.error(`Error parsing row ${index + 1}:`, error);
             }
           });
 
-          if (skippedRows.length > 0) {
-            console.log(`Skipped ${skippedRows.length} rows:`, skippedRows);
-          }
-
-          /* ------------ Step 5: Remove duplicates ------------ */
-          setLoadingMessage('Checking for duplicates...');
+          /* ------------ Remove duplicates in parsed data ------------ */
           const uniqueTrades: Record<string, typeof parsedTrades[0]> = {};
           const internalDuplicates: typeof parsedTrades = [];
 
@@ -396,12 +240,15 @@ export const useProcessCsv = (journal: Journal) => {
           });
 
           const tradesToProcess = Object.values(uniqueTrades);
+          const totalParsedRows = parsedTrades.length;
           
           if (!tradesToProcess.length) {
-            throw new Error('No valid trades found after processing. Check your CSV format and ensure it contains real trading data.');
+            throw new Error('No valid trades found. Check your CSV format and ensure it contains trading data.');
           }
 
-          /* ------------ Step 6: Check against existing data ------------ */
+          console.log(`Parsed ${totalParsedRows} rows, found ${tradesToProcess.length} unique trades, ${internalDuplicates.length} internal duplicates`);
+
+          /* ------------ Remove existing mock/demo data from database ------------ */
           setLoadingMessage('Removing mock data...');
           const mockSymbols = ['AAPL', 'TSLA', 'GOOG', 'GOOGL', 'META', 'NVDA', 'AMZN', 'MSFT', 'DEMO', 'TEST', 'SAMPLE'];
           await supabase
@@ -410,6 +257,7 @@ export const useProcessCsv = (journal: Journal) => {
             .eq('journal_id', journal.id)
             .in('symbol', mockSymbols);
 
+          /* ------------ Fetch existing trades for duplicate check ------------ */
           setLoadingMessage('Checking for duplicate trades...');
           const existingTrades: Array<{
             datetime: string;
@@ -435,6 +283,7 @@ export const useProcessCsv = (journal: Journal) => {
             if (data.length < pageSize) break;
           }
 
+          /* ------------ Create existing keys set for comparison ------------ */
           const existingKeys = new Set(
             existingTrades.map((t) =>
               createCompositeKey({
@@ -449,6 +298,7 @@ export const useProcessCsv = (journal: Journal) => {
             )
           );
 
+          /* ------------ Separate new trades from duplicates ------------ */
           const newTrades: typeof tradesToProcess = [];
           const duplicateEntries: TradeAnalysisSummary['duplicateEntries'] = [];
 
@@ -468,26 +318,18 @@ export const useProcessCsv = (journal: Journal) => {
             }
           });
 
-          /* ------------ Step 7: Generate comprehensive analysis summary ------------ */
-          const psychologicalPatterns = analyzePsychologicalPatterns(newTrades);
-          const timePatterns = analyzeTimePatterns(newTrades);
-          const dataQualityScore = calculateDataQuality(newTrades, headerMapping);
-
-          const analysisSummary: TradeAnalysisSummary = {
-            totalRows: parsedTrades.length,
+          const uploadSummary: TradeAnalysisSummary = {
+            totalRows: totalParsedRows,
             duplicatesSkipped: duplicateEntries.length + internalDuplicates.length,
             newEntriesInserted: newTrades.length,
             fileName: file.name,
             uploadTimestamp,
-            missingColumns,
-            dataQualityScore,
-            duplicateEntries,
-            psychologicalPatterns,
-            timePatterns
+            duplicateEntries
           };
 
-          console.log('Trade Analysis Summary:', analysisSummary);
+          console.log('Upload Summary:', uploadSummary);
 
+          /* ------------ Handle case with no new trades ------------ */
           if (!newTrades.length) {
             await supabase.from('raw_trade_data').insert({
               user_id: user.id,
@@ -497,13 +339,13 @@ export const useProcessCsv = (journal: Journal) => {
                 JSON.stringify({ 
                   mapping: headerMapping, 
                   rows: results.data.slice(0, 10), 
-                  analysisSummary 
+                  uploadSummary 
                 })
               )
             });
 
-            const duplicateMessage = analysisSummary.duplicatesSkipped > 0 
-              ? `All ${analysisSummary.duplicatesSkipped} entries already exist in your journal.`
+            const duplicateMessage = uploadSummary.duplicatesSkipped > 0 
+              ? `All ${uploadSummary.duplicatesSkipped} entries already exist in your journal.`
               : 'No valid new trades found in the uploaded file.';
 
             toast({
@@ -516,8 +358,8 @@ export const useProcessCsv = (journal: Journal) => {
             return;
           }
 
-          /* ------------ Step 8: Store raw data and calculate metrics ------------ */
-          setLoadingMessage('Saving trade data...');
+          /* ------------ Store raw CSV snapshot & summary ------------ */
+          setLoadingMessage('Saving raw file data...');
           const { data: rawData, error: rawError } = await supabase
             .from('raw_trade_data')
             .insert({
@@ -527,7 +369,7 @@ export const useProcessCsv = (journal: Journal) => {
               data: JSON.parse(JSON.stringify({ 
                 mapping: headerMapping, 
                 rows: results.data, 
-                analysisSummary 
+                uploadSummary 
               }))
             })
             .select()
@@ -535,6 +377,7 @@ export const useProcessCsv = (journal: Journal) => {
           
           if (rawError) throw rawError;
 
+          /* ------------ Calculate metrics & create session ------------ */
           setLoadingMessage('Calculating trade metrics...');
           const metrics = calculateMetrics(newTrades as Trade[]);
 
@@ -551,6 +394,7 @@ export const useProcessCsv = (journal: Journal) => {
           
           if (sessionError) throw sessionError;
 
+          /* ------------ Insert new trades ------------ */
           setLoadingMessage(`Inserting ${newTrades.length} trades...`);
           const tradesData = newTrades.map((t) => ({
             ...t,
@@ -562,7 +406,7 @@ export const useProcessCsv = (journal: Journal) => {
           const { error: tradesError } = await supabase.from('trades').insert(tradesData);
           if (tradesError) throw tradesError;
 
-          /* ------------ Step 9: Generate AI insights ------------ */
+          /* ------------ Optional AI insights ------------ */
           try {
             setLoadingMessage('Generating AI insights...');
             const { data: insights, error: insightsError } = await supabase.functions.invoke<
@@ -576,43 +420,25 @@ export const useProcessCsv = (journal: Journal) => {
             console.warn('AI insights failed:', err);
           }
 
-          /* ------------ Step 10: Provide comprehensive summary ------------ */
-          const successMessage = `Successfully processed ${analysisSummary.newEntriesInserted} trades with ${dataQualityScore.toFixed(0)}% data quality score.`;
-          
-          let psychologicalInsights = '';
-          if (psychologicalPatterns.revengeTrading) psychologicalInsights += 'Revenge trading detected. ';
-          if (psychologicalPatterns.overconfidence) psychologicalInsights += 'Overconfidence pattern found. ';
-          if (psychologicalPatterns.lossAversion) psychologicalInsights += 'Loss aversion behavior identified. ';
-
-          const detailedMessage = psychologicalInsights 
-            ? `${successMessage} ${psychologicalInsights}Best trading hours: ${timePatterns.bestPerformingHours.join(', ')}.`
-            : successMessage;
+          /* ------------ Show success notification with duplicate info ------------ */
+          const successMessage = uploadSummary.duplicatesSkipped > 0
+            ? `Successfully inserted ${uploadSummary.newEntriesInserted} new trades. ${uploadSummary.duplicatesSkipped} duplicates were skipped.`
+            : `Successfully inserted ${uploadSummary.newEntriesInserted} trades.`;
 
           toast({
-            title: 'Analysis Complete!',
-            description: detailedMessage
+            title: 'Upload Complete!',
+            description: successMessage
           });
 
-          // Show warning for missing columns
-          if (missingColumns.length > 0) {
+          // Show additional notification for duplicates if any
+          if (uploadSummary.duplicatesSkipped > 0) {
             setTimeout(() => {
               toast({
-                title: 'Data Quality Notice',
-                description: `Some optional columns were not found: ${missingColumns.join(', ')}. Analysis may be limited.`,
+                title: 'Duplicate Trades Found',
+                description: `${uploadSummary.duplicatesSkipped} duplicate trades were identified and skipped to prevent data duplication.`,
                 variant: 'default'
               });
             }, 2000);
-          }
-
-          // Show duplicate notification if any
-          if (analysisSummary.duplicatesSkipped > 0) {
-            setTimeout(() => {
-              toast({
-                title: 'Duplicate Trades',
-                description: `${analysisSummary.duplicatesSkipped} duplicate trades were skipped to prevent data duplication.`,
-                variant: 'default'
-              });
-            }, 4000);
           }
 
           setLoadingMessage('');
