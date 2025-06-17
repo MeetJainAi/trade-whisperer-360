@@ -125,7 +125,7 @@ const createCompositeKey = (
   // Format numbers to fixed decimal places for consistent comparison
   const formatNumber = (n: number | null | undefined) => {
     if (n === null || n === undefined) return '0';
-    return Number(n).toFixed(8);
+    return Number(n).toFixed(4); // Reduced precision to avoid floating point issues
   };
 
   const qty = formatNumber(trade.qty);
@@ -133,7 +133,6 @@ const createCompositeKey = (
   const pnl = formatNumber(trade.pnl);
 
   const key = `${epochTime}|${symbol}|${side}|${qty}|${price}|${pnl}`;
-  console.log(`🔑 Generated key: ${key}`);
   return key;
 };
 
@@ -143,17 +142,16 @@ const isMockData = (trade: any): boolean => {
   const symbol = (trade.symbol || '').toString().toUpperCase().trim();
   
   // Check for mock symbols
-  if (mockSymbols.includes(symbol)) return true;
+  if (mockSymbols.includes(symbol)) {
+    console.log(`🚫 Filtered out mock symbol: ${symbol}`);
+    return true;
+  }
   
   // Check for obvious test data patterns
-  if (symbol.includes('TEST') || symbol.includes('DEMO') || symbol.includes('SAMPLE')) return true;
-  
-  // Check for round numbers that might indicate mock data
-  const pnl = Math.abs(safeParseFloat(trade.pnl));
-  const price = safeParseFloat(trade.price);
-  
-  // Very round numbers might be mock data (but this is less reliable)
-  if (pnl > 0 && pnl % 100 === 0 && price > 0 && price % 10 === 0) return true;
+  if (symbol.includes('TEST') || symbol.includes('DEMO') || symbol.includes('SAMPLE')) {
+    console.log(`🚫 Filtered out test symbol: ${symbol}`);
+    return true;
+  }
   
   return false;
 };
@@ -177,12 +175,20 @@ export const useProcessCsv = (journal: Journal) => {
 
     setLoadingMessage('Parsing CSV file...');
     const text = await file.text();
+    console.log(`📄 CSV file content (first 500 chars): ${text.substring(0, 500)}`);
 
     Papa.parse<CsvRow>(text, {
       header: true,
       skipEmptyLines: true,
       complete: async (results) => {
         try {
+          console.log(`📊 Papa Parse Results:`, {
+            totalRows: results.data.length,
+            headers: results.meta?.fields,
+            errors: results.errors,
+            firstRow: results.data[0]
+          });
+
           if (results.errors.length) {
             throw new Error(
               `CSV parsing error on row ${results.errors[0].row}: ${results.errors[0].message}`
@@ -216,9 +222,34 @@ export const useProcessCsv = (journal: Journal) => {
 
           console.log('🗺️ Column Mapping:', headerMapping);
 
+          // Helper function to get value from row using mapping or fallback
           const getVal = (row: CsvRow, key: string) => {
-            const header = headerMapping[key];
-            return header ? row[header] : undefined;
+            // First try the mapped header
+            const mappedHeader = headerMapping[key];
+            if (mappedHeader && row[mappedHeader] !== undefined) {
+              return row[mappedHeader];
+            }
+            
+            // Fallback to common header variations
+            const fallbacks: Record<string, string[]> = {
+              'datetime': ['Timestamp', 'Time', 'Date', 'DateTime', 'Trade Time'],
+              'symbol': ['Symbol', 'Instrument', 'Ticker'],
+              'side': ['Side', 'Action', 'Type', 'Transaction Type'],
+              'qty': ['Qty', 'Quantity', 'Size', 'Amount'],
+              'price': ['Price', 'Exec Price', 'Execution Price', 'Entry Price', 'Exit Price'],
+              'pnl': ['PnL', 'P/L', 'NetPL', 'Net PnL', 'Profit', 'Loss', 'profit_loss', 'Realized PnL'],
+              'notes': ['Notes', 'Comment', 'Description']
+            };
+            
+            const variations = fallbacks[key] || [];
+            for (const variation of variations) {
+              if (row[variation] !== undefined) {
+                console.log(`🔄 Using fallback header "${variation}" for "${key}"`);
+                return row[variation];
+              }
+            }
+            
+            return undefined;
           };
 
           /* ------------ Parse & deduplicate in-memory ------------ */
@@ -228,51 +259,71 @@ export const useProcessCsv = (journal: Journal) => {
           console.log(`🔄 Processing ${results.data.length} rows...`);
 
           results.data.forEach((row, index) => {
+            console.log(`\n📝 Processing Row ${index + 1}:`, row);
+            
             try {
-              const datetimeVal = getVal(row, 'datetime') || row.Timestamp || row.Time || row.Date;
+              const datetimeVal = getVal(row, 'datetime');
+              console.log(`📅 Row ${index + 1} - datetime value: "${datetimeVal}"`);
+              
               if (!datetimeVal) {
-                console.warn(`Row ${index + 1}: Missing datetime value, skipping`);
+                console.warn(`❌ Row ${index + 1}: Missing datetime value, skipping`);
                 return;
               }
 
               // Get the raw P&L value BEFORE parsing
-              const rawPnlValue = getVal(row, 'pnl') || row.PnL || row['P/L'] || row.NetPL || row.Profit || row.Loss || row.profit_loss;
-              
-              console.log(`📈 Row ${index + 1} - Raw P&L value: "${rawPnlValue}"`);
+              const rawPnlValue = getVal(row, 'pnl');
+              console.log(`💰 Row ${index + 1} - Raw P&L value: "${rawPnlValue}"`);
+
+              const symbolValue = getVal(row, 'symbol');
+              const sideValue = getVal(row, 'side');
+              const qtyValue = getVal(row, 'qty');
+              const priceValue = getVal(row, 'price');
+
+              console.log(`📊 Row ${index + 1} - Raw values:`, {
+                symbol: symbolValue,
+                side: sideValue,
+                qty: qtyValue,
+                price: priceValue,
+                pnl: rawPnlValue
+              });
 
               const trade = {
                 datetime: new Date(datetimeVal as string).toISOString(),
-                symbol: (getVal(row, 'symbol') || row.Symbol || row.Instrument)?.toString().trim().toUpperCase() || null,
-                side: (getVal(row, 'side') || row.Side || row.Action || row.Type)?.toString().trim().toUpperCase() || null,
-                qty: safeParseFloat(getVal(row, 'qty') || row.Qty || row.Quantity || row.Size),
-                price: safeParseFloat(getVal(row, 'price') || row.Price || row.EntryPrice || row.ExitPrice),
+                symbol: symbolValue?.toString().trim().toUpperCase() || null,
+                side: sideValue?.toString().trim().toUpperCase() || null,
+                qty: safeParseFloat(qtyValue),
+                price: safeParseFloat(priceValue),
                 pnl: safeParseFloat(rawPnlValue),
-                notes: ((getVal(row, 'notes') || row.Notes || row.Comment || '') as string).trim() || null
+                notes: ((getVal(row, 'notes') || '') as string).trim() || null
               };
 
-              console.log(`📊 Row ${index + 1} - Parsed trade:`, {
-                symbol: trade.symbol,
-                pnl: trade.pnl,
-                rawPnl: rawPnlValue
-              });
+              console.log(`✅ Row ${index + 1} - Parsed trade:`, trade);
 
-              // Skip rows with invalid or mock data
+              // Check if it's mock data
               if (isMockData(trade)) {
-                console.warn(`Row ${index + 1}: Detected mock data, skipping`);
+                console.warn(`🚫 Row ${index + 1}: Detected mock data, skipping`);
                 return;
               }
 
               // Skip rows with no meaningful data
-              if (!trade.symbol || (trade.pnl === 0 && trade.qty === 0 && trade.price === 0)) {
-                console.warn(`Row ${index + 1}: No meaningful trade data, skipping`);
+              if (!trade.symbol) {
+                console.warn(`❌ Row ${index + 1}: No symbol, skipping`);
                 return;
               }
 
+              if (trade.pnl === 0 && trade.qty === 0 && trade.price === 0) {
+                console.warn(`❌ Row ${index + 1}: All zero values, skipping`);
+                return;
+              }
+
+              console.log(`✅ Row ${index + 1}: Added to parsedTrades`);
               parsedTrades.push(trade);
             } catch (error) {
-              console.error(`Error parsing row ${index + 1}:`, error);
+              console.error(`❌ Error parsing row ${index + 1}:`, error);
             }
           });
+
+          console.log(`\n📊 Parsing Summary: ${parsedTrades.length} trades parsed from ${results.data.length} rows`);
 
           /* ------------ Check parsed P&L values ------------ */
           const positiveCount = parsedTrades.filter(t => (t.pnl || 0) > 0).length;
@@ -290,8 +341,10 @@ export const useProcessCsv = (journal: Journal) => {
           const uniqueTrades: Record<string, typeof parsedTrades[0]> = {};
           const internalDuplicates: typeof parsedTrades = [];
 
-          parsedTrades.forEach((trade) => {
+          parsedTrades.forEach((trade, index) => {
             const key = createCompositeKey(trade);
+            console.log(`🔑 Trade ${index + 1} key: ${key}`);
+            
             if (uniqueTrades[key]) {
               console.log(`🔄 Internal duplicate found: ${key}`);
               internalDuplicates.push(trade);
@@ -348,7 +401,7 @@ export const useProcessCsv = (journal: Journal) => {
 
           /* ------------ Create existing keys set for comparison ------------ */
           const existingKeys = new Set<string>();
-          existingTrades.forEach((trade) => {
+          existingTrades.forEach((trade, index) => {
             const key = createCompositeKey({
               datetime: trade.datetime,
               symbol: trade.symbol?.toUpperCase().trim() || null,
@@ -358,6 +411,7 @@ export const useProcessCsv = (journal: Journal) => {
               pnl: trade.pnl,
               notes: null
             });
+            console.log(`🔑 Existing trade ${index + 1} key: ${key}`);
             existingKeys.add(key);
           });
 
@@ -367,8 +421,10 @@ export const useProcessCsv = (journal: Journal) => {
           const newTrades: typeof tradesToProcess = [];
           const duplicateEntries: TradeAnalysisSummary['duplicateEntries'] = [];
 
-          tradesToProcess.forEach((trade) => {
+          tradesToProcess.forEach((trade, index) => {
             const key = createCompositeKey(trade);
+            console.log(`🔍 Checking trade ${index + 1} with key: ${key}`);
+            
             if (existingKeys.has(key)) {
               console.log(`🚫 DUPLICATE FOUND: ${key}`);
               duplicateEntries.push({
