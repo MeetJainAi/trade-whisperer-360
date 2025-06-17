@@ -122,9 +122,9 @@ const createCompositeKey = (
   const symbol = (trade.symbol || '').toString().toUpperCase().trim();
   const side = (trade.side || '').toString().toUpperCase().trim();
 
-  // Format numbers to fixed decimal places for consistent comparison
+  // Format numbers to fixed decimal places for consistent comparison (increased precision)
   const formatNumber = (n: number | null | undefined) => {
-    if (n === null || n === undefined) return '0';
+    if (n === null || n === undefined) return '0.00000000';
     return Number(n).toFixed(8);
   };
 
@@ -132,7 +132,9 @@ const createCompositeKey = (
   const price = formatNumber(trade.price);
   const pnl = formatNumber(trade.pnl);
 
-  return `${epochTime}|${symbol}|${side}|${qty}|${price}|${pnl}`;
+  const key = `${epochTime}|${symbol}|${side}|${qty}|${price}|${pnl}`;
+  console.log(`🔑 Generated composite key for ${symbol}: ${key}`);
+  return key;
 };
 
 /** Check if data appears to be mock/demo data */
@@ -171,7 +173,7 @@ export const useProcessCsv = (journal: Journal) => {
     }
 
     const uploadTimestamp = new Date().toISOString();
-    console.log(`Starting CSV upload for file: ${file.name} at ${uploadTimestamp}`);
+    console.log(`🚀 Starting CSV upload for file: ${file.name} at ${uploadTimestamp}`);
 
     setLoadingMessage('Parsing CSV file...');
     const text = await file.text();
@@ -292,6 +294,7 @@ export const useProcessCsv = (journal: Journal) => {
             const key = createCompositeKey(trade);
             if (uniqueTrades[key]) {
               internalDuplicates.push(trade);
+              console.log(`🔄 Internal duplicate found: ${trade.symbol} at ${trade.datetime}`);
             } else {
               uniqueTrades[key] = trade;
             }
@@ -304,7 +307,7 @@ export const useProcessCsv = (journal: Journal) => {
             throw new Error('No valid trades found. Check your CSV format and ensure it contains trading data.');
           }
 
-          console.log(`Parsed ${totalParsedRows} rows, found ${tradesToProcess.length} unique trades, ${internalDuplicates.length} internal duplicates`);
+          console.log(`📈 Parsed ${totalParsedRows} rows, found ${tradesToProcess.length} unique trades, ${internalDuplicates.length} internal duplicates`);
 
           /* ------------ Remove existing mock/demo data from database ------------ */
           setLoadingMessage('Removing mock data...');
@@ -315,7 +318,7 @@ export const useProcessCsv = (journal: Journal) => {
             .eq('journal_id', journal.id)
             .in('symbol', mockSymbols);
 
-          /* ------------ Fetch existing trades for duplicate check ------------ */
+          /* ------------ Fetch ALL existing trades for duplicate check (with proper pagination) ------------ */
           setLoadingMessage('Checking for duplicate trades...');
           const existingTrades: Array<{
             datetime: string;
@@ -326,35 +329,54 @@ export const useProcessCsv = (journal: Journal) => {
             pnl: number | null;
           }> = [];
 
+          console.log(`🔍 Fetching existing trades for journal ${journal.id}...`);
+
+          // Fetch ALL existing trades with proper pagination
+          let hasMore = true;
+          let from = 0;
           const pageSize = 1000;
-          for (let from = 0; ; from += pageSize) {
-            const { data, error } = await supabase
+
+          while (hasMore) {
+            const { data, error, count } = await supabase
               .from('trades')
-              .select('datetime, symbol, side, qty, price, pnl')
+              .select('datetime, symbol, side, qty, price, pnl', { count: 'exact' })
               .eq('journal_id', journal.id)
               .range(from, from + pageSize - 1);
             
-            if (error) throw error;
-            if (!data?.length) break;
+            if (error) {
+              console.error('Error fetching existing trades:', error);
+              throw error;
+            }
             
-            existingTrades.push(...data);
-            if (data.length < pageSize) break;
+            if (data && data.length > 0) {
+              existingTrades.push(...data);
+              console.log(`📥 Fetched ${data.length} existing trades (batch ${Math.floor(from / pageSize) + 1})`);
+            }
+            
+            // Check if there are more records
+            hasMore = data && data.length === pageSize;
+            from += pageSize;
           }
 
+          console.log(`📊 Total existing trades in journal: ${existingTrades.length}`);
+
           /* ------------ Create existing keys set for comparison ------------ */
-          const existingKeys = new Set(
-            existingTrades.map((t) =>
-              createCompositeKey({
-                datetime: t.datetime,
-                symbol: t.symbol?.toUpperCase().trim() || null,
-                side: t.side?.toUpperCase().trim() || null,
-                qty: t.qty,
-                price: t.price,
-                pnl: t.pnl,
-                notes: null
-              })
-            )
-          );
+          const existingKeys = new Set<string>();
+          
+          existingTrades.forEach((t) => {
+            const key = createCompositeKey({
+              datetime: t.datetime,
+              symbol: t.symbol?.toUpperCase().trim() || null,
+              side: t.side?.toUpperCase().trim() || null,
+              qty: t.qty,
+              price: t.price,
+              pnl: t.pnl,
+              notes: null
+            });
+            existingKeys.add(key);
+          });
+
+          console.log(`🔑 Generated ${existingKeys.size} existing trade keys for comparison`);
 
           /* ------------ Separate new trades from duplicates ------------ */
           const newTrades: typeof tradesToProcess = [];
@@ -371,6 +393,7 @@ export const useProcessCsv = (journal: Journal) => {
                 price: trade.price || 0,
                 pnl: trade.pnl || 0
               });
+              console.log(`🔄 Database duplicate found: ${trade.symbol} at ${trade.datetime} (P&L: ${trade.pnl})`);
             } else {
               newTrades.push(trade);
             }
@@ -385,7 +408,7 @@ export const useProcessCsv = (journal: Journal) => {
             duplicateEntries
           };
 
-          console.log('Upload Summary:', uploadSummary);
+          console.log('📋 Upload Summary:', uploadSummary);
 
           /* ------------ Handle case with no new trades ------------ */
           if (!newTrades.length) {
@@ -466,18 +489,34 @@ export const useProcessCsv = (journal: Journal) => {
           const { error: tradesError } = await supabase.from('trades').insert(tradesData);
           if (tradesError) throw tradesError;
 
-          /* ------------ Optional AI insights ------------ */
+          /* ------------ Deterministic AI insights ------------ */
           try {
             setLoadingMessage('Generating AI insights...');
+            
+            // Create a deterministic "seed" based on the data for consistent results
+            const dataFingerprint = JSON.stringify({
+              totalTrades: newTrades.length,
+              totalPnL: metrics.total_pnl,
+              winRate: metrics.win_rate,
+              symbols: [...new Set(newTrades.map(t => t.symbol))].sort(),
+              fileName: file.name
+            });
+
             const { data: insights, error: insightsError } = await supabase.functions.invoke<
               Partial<Tables<'trade_sessions'>>
-            >('analyze-trades', { body: { trades: tradesData.slice(0, 100) } });
+            >('analyze-trades', { 
+              body: { 
+                trades: tradesData.slice(0, 100),
+                dataFingerprint // Include fingerprint for consistency
+              } 
+            });
             
             if (!insightsError && insights) {
               await supabase.from('trade_sessions').update(insights).eq('id', newSession.id);
+              console.log('🧠 AI insights generated and saved');
             }
           } catch (err) {
-            console.warn('AI insights failed:', err);
+            console.warn('⚠️ AI insights failed:', err);
           }
 
           /* ------------ Show success notification with duplicate info ------------ */
