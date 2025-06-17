@@ -1,3 +1,5 @@
+// src/hooks/useProcessCsv.ts
+
 import { useState } from 'react';
 import Papa from 'papaparse';
 import { supabase } from '@/integrations/supabase/client';
@@ -62,7 +64,7 @@ const safeParseFloat = (value: unknown): number => {
     }
 
     // Remove currency symbols, commas, spaces, and other non-numeric characters
-    cleanValue = cleanValue.replace(/[$,%\s€£¥₹]+/g, '');
+    cleanValue = cleanValue.replace(/[$,%\s鈧Ｂモ偣]+/g, '');
     
     // Keep only digits and dots
     cleanValue = cleanValue.replace(/[^0-9.]/g, '');
