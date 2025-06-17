@@ -1,4 +1,3 @@
-
 import 'https://deno.land/x/xhr@0.1.0/mod.ts';
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 
@@ -27,27 +26,80 @@ serve(async (req) => {
 
         const tradesForAnalysis = trades.slice(0, 100);
 
+        // Calculate basic metrics for context
+        const totalPnL = tradesForAnalysis.reduce((sum, t) => sum + (t.pnl || 0), 0);
+        const winners = tradesForAnalysis.filter(t => (t.pnl || 0) > 0);
+        const losers = tradesForAnalysis.filter(t => (t.pnl || 0) < 0);
+        const winRate = tradesForAnalysis.length > 0 ? (winners.length / tradesForAnalysis.length) * 100 : 0;
+
+        // Group trades by hour to analyze time patterns
+        const hourlyData = {};
+        tradesForAnalysis.forEach(trade => {
+            if (trade.datetime) {
+                const hour = new Date(trade.datetime).getHours();
+                if (!hourlyData[hour]) hourlyData[hour] = [];
+                hourlyData[hour].push(trade.pnl || 0);
+            }
+        });
+
+        // Group trades by symbol for instrument analysis
+        const symbolData = {};
+        tradesForAnalysis.forEach(trade => {
+            const symbol = trade.symbol || 'UNKNOWN';
+            if (!symbolData[symbol]) symbolData[symbol] = [];
+            symbolData[symbol].push(trade.pnl || 0);
+        });
+
         const prompt = `
-You are a professional trading coach and data analyst. You are analyzing a trader's journal.
-Based on the following trades, provide an analysis of their performance.
+You are a professional trading psychology coach and performance analyst. Analyze this trader's performance data.
 
-Trades data (up to 100 trades):
-${JSON.stringify(tradesForAnalysis, (key, value) => (key === 'id' || key === 'user_id' || key === 'session_id' || key === 'created_at') ? undefined : value, 2)}
+TRADING PERFORMANCE SUMMARY:
+- Total Trades: ${tradesForAnalysis.length}
+- Total P&L: $${totalPnL.toFixed(2)}
+- Win Rate: ${winRate.toFixed(1)}%
+- Winners: ${winners.length}, Losers: ${losers.length}
 
-Please provide your analysis in a valid JSON object only, with no other text or explanations.
-The JSON object must have the following structure:
+TRADE SAMPLE DATA (up to 100 trades):
+${JSON.stringify(tradesForAnalysis.slice(0, 20), (key, value) => (key === 'id' || key === 'user_id' || key === 'session_id' || key === 'created_at') ? undefined : value, 2)}
+
+HOURLY PERFORMANCE DATA:
+${JSON.stringify(hourlyData, null, 2)}
+
+SYMBOL PERFORMANCE DATA:
+${JSON.stringify(symbolData, null, 2)}
+
+As a trading coach, provide analysis focusing on:
+1. Psychological patterns and biases
+2. Risk management behaviors
+3. Performance consistency
+4. Time-of-day patterns
+5. Instrument selection patterns
+
+Respond with ONLY a valid JSON object with this exact structure:
 {
-  "ai_strengths": ["string", "string", "string"],
-  "ai_mistakes": ["string", "string", "string"],
-  "ai_fixes": ["string", "string", "string"],
-  "ai_key_insight": "string"
+  "ai_strengths": ["strength1", "strength2", "strength3"],
+  "ai_mistakes": ["mistake1", "mistake2", "mistake3"],
+  "ai_fixes": ["fix1", "fix2", "fix3"],
+  "ai_key_insight": "comprehensive_insight"
 }
 
 Guidelines:
-- ai_strengths: Identify 2-3 specific, positive patterns.
-- ai_mistakes: Identify 2-3 specific, common mistakes.
-- ai_fixes: Suggest 3 concrete, actionable steps for improvement.
-- ai_key_insight: Provide one overarching, insightful summary.
+- ai_strengths: Identify 2-3 specific positive patterns or behaviors
+- ai_mistakes: Identify 2-3 specific recurring problems or psychological biases
+- ai_fixes: Suggest 3 concrete, actionable improvements
+- ai_key_insight: One comprehensive insight about their trading psychology or biggest opportunity
+
+Focus on psychological aspects like:
+- Revenge trading after losses
+- Overconfidence after wins
+- Position sizing discipline
+- Time management
+- Emotional control
+- Risk-reward ratios
+- Consistency patterns
+- Entry/exit timing
+
+Be specific and actionable in your recommendations.
 `;
 
         const response = await fetch(GEMINI_API_URL, {
@@ -57,6 +109,8 @@ Guidelines:
                 contents: [{ parts: [{ text: prompt }] }],
                 generationConfig: {
                     response_mime_type: "application/json",
+                    temperature: 0.7,
+                    max_output_tokens: 1000
                 }
             }),
         });
@@ -75,12 +129,24 @@ Guidelines:
         }
 
         const insightsText = geminiResponse.candidates[0].content.parts[0].text;
-        const insights = JSON.parse(insightsText);
+        
+        let insights;
+        try {
+            insights = JSON.parse(insightsText);
+        } catch (parseError) {
+            console.error('Failed to parse AI response as JSON:', insightsText);
+            throw new Error('AI analysis result could not be parsed.');
+        }
         
         if (!insights.ai_strengths || !insights.ai_mistakes || !insights.ai_fixes || !insights.ai_key_insight) {
             console.error('Parsed insights object is missing required keys:', insights);
             throw new Error('AI analysis result is incomplete.');
         }
+
+        // Ensure arrays are properly formatted
+        insights.ai_strengths = Array.isArray(insights.ai_strengths) ? insights.ai_strengths : [insights.ai_strengths];
+        insights.ai_mistakes = Array.isArray(insights.ai_mistakes) ? insights.ai_mistakes : [insights.ai_mistakes];
+        insights.ai_fixes = Array.isArray(insights.ai_fixes) ? insights.ai_fixes : [insights.ai_fixes];
 
         return new Response(JSON.stringify(insights), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
