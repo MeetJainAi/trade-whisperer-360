@@ -111,29 +111,29 @@ const safeParseFloat = (value: unknown): number => {
   return 0;
 };
 
-/** Enhanced composite key for deduplication with better normalization */
+/** ROBUST composite key for deduplication with normalized comparison */
 const createCompositeKey = (
   trade: Omit<TablesInsert<'trades'>, 'user_id' | 'journal_id' | 'session_id'>
 ): string => {
-  // Normalize datetime to epoch milliseconds for consistent comparison
-  const epochTime = new Date(trade.datetime).getTime();
+  // Normalize datetime to date only (ignore time differences)
+  const date = new Date(trade.datetime);
+  const dateKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
   
-  // Normalize symbol and side to uppercase and trim whitespace
+  // Normalize symbol and side
   const symbol = (trade.symbol || '').toString().toUpperCase().trim();
   const side = (trade.side || '').toString().toUpperCase().trim();
 
-  // Format numbers to fixed decimal places for consistent comparison (increased precision)
-  const formatNumber = (n: number | null | undefined) => {
-    if (n === null || n === undefined) return '0.00000000';
-    return Number(n).toFixed(8);
+  // Round numbers to 2 decimal places for comparison (not 8!)
+  const formatNumber = (n: number | null | undefined): string => {
+    if (n === null || n === undefined) return '0.00';
+    return Number(n).toFixed(2);
   };
 
   const qty = formatNumber(trade.qty);
   const price = formatNumber(trade.price);
   const pnl = formatNumber(trade.pnl);
 
-  const key = `${epochTime}|${symbol}|${side}|${qty}|${price}|${pnl}`;
-  console.log(`🔑 Generated composite key for ${symbol}: ${key}`);
+  const key = `${dateKey}|${symbol}|${side}|${qty}|${price}|${pnl}`;
   return key;
 };
 
@@ -253,7 +253,8 @@ export const useProcessCsv = (journal: Journal) => {
               console.log(`📊 Row ${index + 1} - Parsed trade:`, {
                 symbol: trade.symbol,
                 pnl: trade.pnl,
-                rawPnl: rawPnlValue
+                rawPnl: rawPnlValue,
+                compositeKey: createCompositeKey(trade)
               });
 
               // Skip rows with invalid or mock data
@@ -318,8 +319,11 @@ export const useProcessCsv = (journal: Journal) => {
             .eq('journal_id', journal.id)
             .in('symbol', mockSymbols);
 
-          /* ------------ Fetch ALL existing trades for duplicate check (with proper pagination) ------------ */
+          /* ------------ Fetch ALL existing trades for duplicate check ------------ */
           setLoadingMessage('Checking for duplicate trades...');
+          console.log(`🔍 Fetching existing trades for journal ${journal.id}...`);
+
+          // Fetch ALL existing trades with proper pagination
           const existingTrades: Array<{
             datetime: string;
             symbol: string | null;
@@ -329,22 +333,19 @@ export const useProcessCsv = (journal: Journal) => {
             pnl: number | null;
           }> = [];
 
-          console.log(`🔍 Fetching existing trades for journal ${journal.id}...`);
-
-          // Fetch ALL existing trades with proper pagination
           let hasMore = true;
           let from = 0;
           const pageSize = 1000;
 
           while (hasMore) {
-            const { data, error, count } = await supabase
+            const { data, error } = await supabase
               .from('trades')
-              .select('datetime, symbol, side, qty, price, pnl', { count: 'exact' })
+              .select('datetime, symbol, side, qty, price, pnl')
               .eq('journal_id', journal.id)
               .range(from, from + pageSize - 1);
             
             if (error) {
-              console.error('Error fetching existing trades:', error);
+              console.error('❌ Error fetching existing trades:', error);
               throw error;
             }
             
@@ -384,6 +385,8 @@ export const useProcessCsv = (journal: Journal) => {
 
           tradesToProcess.forEach((trade) => {
             const key = createCompositeKey(trade);
+            console.log(`🔍 Checking trade key: ${key}`);
+            
             if (existingKeys.has(key)) {
               duplicateEntries.push({
                 datetime: trade.datetime,
@@ -396,6 +399,7 @@ export const useProcessCsv = (journal: Journal) => {
               console.log(`🔄 Database duplicate found: ${trade.symbol} at ${trade.datetime} (P&L: ${trade.pnl})`);
             } else {
               newTrades.push(trade);
+              console.log(`✅ New trade found: ${trade.symbol} at ${trade.datetime} (P&L: ${trade.pnl})`);
             }
           });
 
@@ -412,6 +416,9 @@ export const useProcessCsv = (journal: Journal) => {
 
           /* ------------ Handle case with no new trades ------------ */
           if (!newTrades.length) {
+            console.log('🚫 No new trades to insert - all are duplicates');
+            
+            // Still store raw data for reference
             await supabase.from('raw_trade_data').insert({
               user_id: user.id,
               file_name: file.name,
@@ -499,7 +506,11 @@ export const useProcessCsv = (journal: Journal) => {
               totalPnL: metrics.total_pnl,
               winRate: metrics.win_rate,
               symbols: [...new Set(newTrades.map(t => t.symbol))].sort(),
-              fileName: file.name
+              fileName: file.name,
+              dateRange: {
+                start: newTrades[0]?.datetime,
+                end: newTrades[newTrades.length - 1]?.datetime
+              }
             });
 
             const { data: insights, error: insightsError } = await supabase.functions.invoke<
@@ -543,7 +554,7 @@ export const useProcessCsv = (journal: Journal) => {
           setLoadingMessage('');
           window.location.reload();
         } catch (err) {
-          console.error('Error processing CSV:', err);
+          console.error('❌ Error processing CSV:', err);
           toast({ 
             title: 'Upload Error', 
             description: (err as Error).message, 
@@ -553,7 +564,7 @@ export const useProcessCsv = (journal: Journal) => {
         }
       },
       error: (error) => {
-        console.error('CSV parsing error:', error);
+        console.error('❌ CSV parsing error:', error);
         toast({ 
           title: 'CSV Parsing Error', 
           description: error.message, 
