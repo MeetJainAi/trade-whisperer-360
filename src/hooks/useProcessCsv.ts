@@ -41,25 +41,40 @@ const safeParseFloat = (value: unknown): number => {
       return 0;
     }
 
+    console.log(`🔍 Parsing value: "${value}" -> cleaned: "${cleanValue}"`);
+
     let isNegative = false;
 
-    // Handle multiple parentheses formats: (500), ($500), (500.00), etc.
-    const parenthesesMatch = cleanValue.match(/^\s*\(\s*([^)]+)\s*\)\s*$/);
-    if (parenthesesMatch) {
-      isNegative = true;
-      cleanValue = parenthesesMatch[1];
+    // Handle parentheses formats: (500), ($500), (500.00), etc.
+    // More robust regex to catch various parentheses formats
+    const parenthesesPatterns = [
+      /^\s*\(\s*\$?([0-9,.-]+)\s*\)\s*$/,  // (500) or ($500)
+      /^\s*\(\s*([0-9,.-]+)\s*\)\s*$/,      // Simple (500)
+      /^\s*\$\s*\(\s*([0-9,.-]+)\s*\)\s*$/, // $(500)
+    ];
+
+    for (const pattern of parenthesesPatterns) {
+      const match = cleanValue.match(pattern);
+      if (match) {
+        isNegative = true;
+        cleanValue = match[1];
+        console.log(`💰 Found parentheses format: "${value}" -> negative: ${cleanValue}`);
+        break;
+      }
     }
 
     // Check for trailing minus: 500-, $500-, 500.00-, etc.
-    if (cleanValue.match(/.*-\s*$/)) {
+    if (!isNegative && cleanValue.match(/.*-\s*$/)) {
       isNegative = true;
       cleanValue = cleanValue.replace(/-\s*$/, '');
+      console.log(`➖ Found trailing minus: "${value}" -> negative: ${cleanValue}`);
     }
 
     // Check for leading minus (but not if we already detected negative from parentheses)
     if (!isNegative && cleanValue.startsWith('-')) {
       isNegative = true;
       cleanValue = cleanValue.slice(1);
+      console.log(`⬅️ Found leading minus: "${value}" -> negative: ${cleanValue}`);
     }
 
     // Remove all currency symbols, commas, spaces, and other non-numeric characters
@@ -85,7 +100,13 @@ const safeParseFloat = (value: unknown): number => {
     const parsed = parseFloat(cleanValue);
     const result = isNaN(parsed) ? 0 : parsed;
     
-    return isNegative ? -Math.abs(result) : result;
+    const finalValue = isNegative ? -Math.abs(result) : result;
+    
+    if (isNegative || Math.abs(result) > 0) {
+      console.log(`✅ Final parsed value: "${value}" -> ${finalValue} (negative: ${isNegative})`);
+    }
+    
+    return finalValue;
   }
   return 0;
 };
@@ -170,6 +191,9 @@ export const useProcessCsv = (journal: Journal) => {
           const csvDataSample = results.data.slice(0, 3);
           let headerMapping: Record<string, string> = {};
 
+          console.log('📊 CSV Headers:', csvHeaders);
+          console.log('📊 Sample Data:', csvDataSample);
+
           /* ------------ Validate trading CSV ------------ */
           setLoadingMessage('Validating CSV data...');
           const { data: validationData, error: validationError } = await supabase.functions.invoke<
@@ -188,6 +212,8 @@ export const useProcessCsv = (journal: Journal) => {
           if (mappingError) throw mappingError;
           headerMapping = mappingData?.mapping || {};
 
+          console.log('🗺️ Column Mapping:', headerMapping);
+
           const getVal = (row: CsvRow, key: string) => {
             const header = headerMapping[key];
             return header ? row[header] : undefined;
@@ -197,6 +223,8 @@ export const useProcessCsv = (journal: Journal) => {
           setLoadingMessage('Processing trade data...');
           const parsedTrades: Array<Omit<TablesInsert<'trades'>, 'user_id' | 'journal_id' | 'session_id'>> = [];
 
+          console.log(`🔄 Processing ${results.data.length} rows...`);
+
           results.data.forEach((row, index) => {
             try {
               const datetimeVal = getVal(row, 'datetime') || row.Timestamp || row.Time || row.Date;
@@ -205,21 +233,26 @@ export const useProcessCsv = (journal: Journal) => {
                 return;
               }
 
+              // Get the raw P&L value BEFORE parsing
+              const rawPnlValue = getVal(row, 'pnl') || row.PnL || row['P/L'] || row.NetPL || row.Profit || row.Loss || row.profit_loss;
+              
+              console.log(`📈 Row ${index + 1} - Raw P&L value: "${rawPnlValue}"`);
+
               const trade = {
                 datetime: new Date(datetimeVal as string).toISOString(),
                 symbol: (getVal(row, 'symbol') || row.Symbol || row.Instrument)?.toString().trim().toUpperCase() || null,
                 side: (getVal(row, 'side') || row.Side || row.Action || row.Type)?.toString().trim().toUpperCase() || null,
                 qty: safeParseFloat(getVal(row, 'qty') || row.Qty || row.Quantity || row.Size),
                 price: safeParseFloat(getVal(row, 'price') || row.Price || row.EntryPrice || row.ExitPrice),
-                pnl: safeParseFloat(getVal(row, 'pnl') || row.PnL || row['P/L'] || row.NetPL || row.Profit || row.Loss),
+                pnl: safeParseFloat(rawPnlValue),
                 notes: ((getVal(row, 'notes') || row.Notes || row.Comment || '') as string).trim() || null
               };
 
-              // Debug log for negative value handling
-              const originalPnlValue = getVal(row, 'pnl') || row.PnL || row['P/L'] || row.NetPL || row.Profit || row.Loss;
-              if (originalPnlValue && originalPnlValue.toString().includes('(')) {
-                console.log(`Processing negative value: "${originalPnlValue}" -> ${trade.pnl}`);
-              }
+              console.log(`📊 Row ${index + 1} - Parsed trade:`, {
+                symbol: trade.symbol,
+                pnl: trade.pnl,
+                rawPnl: rawPnlValue
+              });
 
               // Skip rows with invalid or mock data
               if (isMockData(trade)) {
@@ -238,6 +271,18 @@ export const useProcessCsv = (journal: Journal) => {
               console.error(`Error parsing row ${index + 1}:`, error);
             }
           });
+
+          /* ------------ Check parsed P&L values ------------ */
+          const positiveCount = parsedTrades.filter(t => (t.pnl || 0) > 0).length;
+          const negativeCount = parsedTrades.filter(t => (t.pnl || 0) < 0).length;
+          const zeroCount = parsedTrades.filter(t => (t.pnl || 0) === 0).length;
+
+          console.log(`📊 P&L Summary: ${positiveCount} positive, ${negativeCount} negative, ${zeroCount} zero`);
+
+          if (negativeCount === 0 && positiveCount > 10) {
+            console.warn('⚠️ WARNING: No negative P&L values found! This suggests parsing issues.');
+            console.log('📋 Sample parsed trades:', parsedTrades.slice(0, 5).map(t => ({ pnl: t.pnl, symbol: t.symbol })));
+          }
 
           /* ------------ Remove duplicates in parsed data ------------ */
           const uniqueTrades: Record<string, typeof parsedTrades[0]> = {};
@@ -393,6 +438,8 @@ export const useProcessCsv = (journal: Journal) => {
           /* ------------ Calculate metrics & create session ------------ */
           setLoadingMessage('Calculating trade metrics...');
           const metrics = calculateMetrics(newTrades as Trade[]);
+
+          console.log('📊 Calculated metrics:', metrics);
 
           const { data: newSession, error: sessionError } = await supabase
             .from('trade_sessions')
