@@ -13,13 +13,14 @@ interface CsvRow {
   [key: string]: string | number | undefined;
 }
 
-// Enhanced trade analysis summary
 interface TradeAnalysisSummary {
   totalRows: number;
   duplicatesSkipped: number;
   newEntriesInserted: number;
   fileName: string;
   uploadTimestamp: string;
+  parseErrors: number;
+  validTrades: number;
   duplicateEntries: Array<{
     datetime: string;
     symbol: string;
@@ -36,7 +37,6 @@ const safeParseFloat = (value: unknown): number => {
   if (typeof value === 'string') {
     let cleanValue = value.trim();
     
-    // Handle empty or invalid strings
     if (!cleanValue || cleanValue === '' || cleanValue === 'null' || cleanValue === 'undefined') {
       return 0;
     }
@@ -46,11 +46,10 @@ const safeParseFloat = (value: unknown): number => {
     let isNegative = false;
 
     // Handle parentheses formats: (500), ($500), (500.00), etc.
-    // More robust regex to catch various parentheses formats
     const parenthesesPatterns = [
-      /^\s*\(\s*\$?([0-9,.-]+)\s*\)\s*$/,  // (500) or ($500)
-      /^\s*\(\s*([0-9,.-]+)\s*\)\s*$/,      // Simple (500)
-      /^\s*\$\s*\(\s*([0-9,.-]+)\s*\)\s*$/, // $(500)
+      /^\s*\(\s*\$?([0-9,.-]+)\s*\)\s*$/,
+      /^\s*\(\s*([0-9,.-]+)\s*\)\s*$/,
+      /^\s*\$\s*\(\s*([0-9,.-]+)\s*\)\s*$/,
     ];
 
     for (const pattern of parenthesesPatterns) {
@@ -63,28 +62,25 @@ const safeParseFloat = (value: unknown): number => {
       }
     }
 
-    // Check for trailing minus: 500-, $500-, 500.00-, etc.
+    // Check for trailing minus: 500-, $500-, 500.00-
     if (!isNegative && cleanValue.match(/.*-\s*$/)) {
       isNegative = true;
       cleanValue = cleanValue.replace(/-\s*$/, '');
       console.log(`➖ Found trailing minus: "${value}" -> negative: ${cleanValue}`);
     }
 
-    // Check for leading minus (but not if we already detected negative from parentheses)
+    // Check for leading minus
     if (!isNegative && cleanValue.startsWith('-')) {
       isNegative = true;
       cleanValue = cleanValue.slice(1);
       console.log(`⬅️ Found leading minus: "${value}" -> negative: ${cleanValue}`);
     }
 
-    // Remove all currency symbols, commas, spaces, and other non-numeric characters
-    // Keep only digits, dots, and handle multiple currencies
+    // Remove currency symbols, commas, spaces
     cleanValue = cleanValue.replace(/[$,%\s€£¥₹¢₨₩₪₫₡₦₨₱₽₪₴₸₼₿]+/g, '');
-    
-    // Remove any remaining non-numeric characters except dots
     cleanValue = cleanValue.replace(/[^0-9.]/g, '');
     
-    // Handle multiple dots - keep only the first one as decimal separator
+    // Handle multiple dots
     const dotIndex = cleanValue.indexOf('.');
     if (dotIndex !== -1) {
       const beforeDot = cleanValue.substring(0, dotIndex);
@@ -92,14 +88,12 @@ const safeParseFloat = (value: unknown): number => {
       cleanValue = beforeDot + '.' + afterDot;
     }
 
-    // Handle edge case where we might have just a dot
     if (cleanValue === '.' || cleanValue === '') {
       return 0;
     }
 
     const parsed = parseFloat(cleanValue);
     const result = isNaN(parsed) ? 0 : parsed;
-    
     const finalValue = isNegative ? -Math.abs(result) : result;
     
     if (isNegative || Math.abs(result) > 0) {
@@ -116,20 +110,55 @@ const isMockData = (trade: any): boolean => {
   const mockSymbols = ['AAPL', 'TSLA', 'GOOG', 'GOOGL', 'META', 'NVDA', 'AMZN', 'MSFT', 'DEMO', 'TEST', 'SAMPLE'];
   const symbol = (trade.symbol || '').toString().toUpperCase().trim();
   
-  // Check for mock symbols
   if (mockSymbols.includes(symbol)) return true;
-  
-  // Check for obvious test data patterns
   if (symbol.includes('TEST') || symbol.includes('DEMO') || symbol.includes('SAMPLE')) return true;
   
-  // Check for round numbers that might indicate mock data
   const pnl = Math.abs(safeParseFloat(trade.pnl));
   const price = safeParseFloat(trade.price);
   
-  // Very round numbers might be mock data (but this is less reliable)
   if (pnl > 0 && pnl % 100 === 0 && price > 0 && price % 10 === 0) return true;
   
   return false;
+};
+
+/** Validate trade data */
+const validateTradeData = (trade: any): { isValid: boolean; errors: string[] } => {
+  const errors: string[] = [];
+  
+  if (!trade.datetime) {
+    errors.push('Missing datetime');
+  } else {
+    const date = new Date(trade.datetime);
+    if (isNaN(date.getTime())) {
+      errors.push('Invalid datetime format');
+    } else if (date > new Date()) {
+      errors.push('Datetime is in the future');
+    } else if (date < new Date('2000-01-01')) {
+      errors.push('Datetime is too far in the past');
+    }
+  }
+  
+  if (!trade.symbol || trade.symbol.toString().trim().length === 0) {
+    errors.push('Missing or empty symbol');
+  }
+  
+  if (!trade.side || !['BUY', 'SELL', 'LONG', 'SHORT', 'buy', 'sell', 'long', 'short'].includes(trade.side.toString().toUpperCase())) {
+    errors.push('Invalid or missing side');
+  }
+  
+  if (!trade.qty || safeParseFloat(trade.qty) <= 0) {
+    errors.push('Invalid quantity (must be positive)');
+  }
+  
+  if (!trade.price || safeParseFloat(trade.price) <= 0) {
+    errors.push('Invalid price (must be positive)');
+  }
+  
+  if (trade.pnl === undefined || trade.pnl === null) {
+    errors.push('Missing P&L value');
+  }
+  
+  return { isValid: errors.length === 0, errors };
 };
 
 export const useProcessCsv = (journal: Journal) => {
@@ -147,278 +176,343 @@ export const useProcessCsv = (journal: Journal) => {
     }
 
     const uploadTimestamp = new Date().toISOString();
-    console.log(`Starting CSV upload for file: ${file.name} at ${uploadTimestamp}`);
+    console.log(`🚀 Starting CSV processing for file: ${file.name}`);
 
-    setLoadingMessage('Parsing CSV file...');
-    const text = await file.text();
+    setLoadingMessage('Reading CSV file...');
+    
+    try {
+      const text = await file.text();
+      console.log(`📄 File size: ${text.length} characters`);
 
-    Papa.parse<CsvRow>(text, {
-      header: true,
-      skipEmptyLines: true,
-      complete: async (results) => {
-        try {
-          if (results.errors.length) {
-            throw new Error(
-              `CSV parsing error on row ${results.errors[0].row}: ${results.errors[0].message}`
-            );
-          }
-
-          const csvHeaders = results.meta?.fields || [];
-          const csvDataSample = results.data.slice(0, 3);
-          let headerMapping: Record<string, string> = {};
-
-          console.log('📊 CSV Headers:', csvHeaders);
-          console.log('📊 Sample Data:', csvDataSample);
-          console.log(`📊 Total CSV rows: ${results.data.length}`);
-
-          /* ------------ Validate trading CSV ------------ */
-          setLoadingMessage('Validating CSV data...');
-          const { data: validationData, error: validationError } = await supabase.functions.invoke<
-            { is_trading_related: boolean }
-          >('validate-csv-content', { body: { csvHeaders, csvDataSample } });
-          if (validationError) throw validationError;
-          if (!validationData?.is_trading_related) {
-            throw new Error('The uploaded CSV does not appear to contain trading data.');
-          }
-
-          /* ------------ AI column mapping (Gemini) ------------ */
-          setLoadingMessage('Mapping CSV columns...');
-          const { data: mappingData, error: mappingError } = await supabase.functions.invoke<
-            { mapping: Record<string, string> }
-          >('map-columns-with-gemini', { body: { csvHeaders, csvDataSample } });
-          if (mappingError) throw mappingError;
-          headerMapping = mappingData?.mapping || {};
-
-          console.log('🗺️ Column Mapping:', headerMapping);
-
-          const getVal = (row: CsvRow, key: string) => {
-            const header = headerMapping[key];
-            return header ? row[header] : undefined;
-          };
-
-          /* ------------ Parse trades from CSV ------------ */
-          setLoadingMessage('Processing trade data...');
-          const parsedTrades: Array<Omit<TablesInsert<'trades'>, 'user_id' | 'journal_id' | 'session_id'>> = [];
-
-          console.log(`🔄 Processing ${results.data.length} rows...`);
-
-          results.data.forEach((row, index) => {
-            try {
-              const datetimeVal = getVal(row, 'datetime') || row.Timestamp || row.Time || row.Date;
-              if (!datetimeVal) {
-                console.warn(`Row ${index + 1}: Missing datetime value, skipping`);
-                return;
-              }
-
-              // Get the raw P&L value BEFORE parsing
-              const rawPnlValue = getVal(row, 'pnl') || row.PnL || row['P/L'] || row.NetPL || row.Profit || row.Loss || row.profit_loss;
-              
-              console.log(`📈 Row ${index + 1} - Raw P&L value: "${rawPnlValue}"`);
-
-              const trade = {
-                datetime: new Date(datetimeVal as string).toISOString(),
-                symbol: (getVal(row, 'symbol') || row.Symbol || row.Instrument)?.toString().trim().toUpperCase() || null,
-                side: (getVal(row, 'side') || row.Side || row.Action || row.Type)?.toString().trim().toUpperCase() || null,
-                qty: safeParseFloat(getVal(row, 'qty') || row.Qty || row.Quantity || row.Size),
-                price: safeParseFloat(getVal(row, 'price') || row.Price || row.EntryPrice || row.ExitPrice),
-                pnl: safeParseFloat(rawPnlValue),
-                notes: ((getVal(row, 'notes') || row.Notes || row.Comment || '') as string).trim() || null
-              };
-
-              console.log(`📊 Row ${index + 1} - Parsed trade:`, {
-                symbol: trade.symbol,
-                pnl: trade.pnl,
-                rawPnl: rawPnlValue
-              });
-
-              // Skip rows with invalid or mock data
-              if (isMockData(trade)) {
-                console.warn(`Row ${index + 1}: Detected mock data, skipping`);
-                return;
-              }
-
-              // Skip rows with no meaningful data
-              if (!trade.symbol || (trade.pnl === 0 && trade.qty === 0 && trade.price === 0)) {
-                console.warn(`Row ${index + 1}: No meaningful trade data, skipping`);
-                return;
-              }
-
-              parsedTrades.push(trade);
-            } catch (error) {
-              console.error(`Error parsing row ${index + 1}:`, error);
-            }
-          });
-
-          console.log(`📊 Parsed ${parsedTrades.length} valid trades from ${results.data.length} CSV rows`);
-
-          /* ------------ Check parsed P&L values ------------ */
-          const positiveCount = parsedTrades.filter(t => (t.pnl || 0) > 0).length;
-          const negativeCount = parsedTrades.filter(t => (t.pnl || 0) < 0).length;
-          const zeroCount = parsedTrades.filter(t => (t.pnl || 0) === 0).length;
-
-          console.log(`📊 P&L Summary: ${positiveCount} positive, ${negativeCount} negative, ${zeroCount} zero`);
-
-          if (negativeCount === 0 && positiveCount > 10) {
-            console.warn('⚠️ WARNING: No negative P&L values found! This suggests parsing issues.');
-            console.log('📋 Sample parsed trades:', parsedTrades.slice(0, 5).map(t => ({ pnl: t.pnl, symbol: t.symbol })));
-          }
-
-          if (!parsedTrades.length) {
-            throw new Error('No valid trades found. Check your CSV format and ensure it contains trading data.');
-          }
-
-          /* ------------ Remove existing mock/demo data from database ------------ */
-          setLoadingMessage('Removing mock data...');
-          const mockSymbols = ['AAPL', 'TSLA', 'GOOG', 'GOOGL', 'META', 'NVDA', 'AMZN', 'MSFT', 'DEMO', 'TEST', 'SAMPLE'];
-          await supabase
-            .from('trades')
-            .delete()
-            .eq('journal_id', journal.id)
-            .in('symbol', mockSymbols);
-
-          /* ------------ Store raw CSV snapshot ------------ */
-          setLoadingMessage('Saving raw file data...');
-          const uploadSummary: TradeAnalysisSummary = {
-            totalRows: results.data.length,
-            duplicatesSkipped: 0, // Will be updated after duplicate check
-            newEntriesInserted: 0, // Will be updated after insertion
-            fileName: file.name,
-            uploadTimestamp,
-            duplicateEntries: []
-          };
-
-          const { data: rawData, error: rawError } = await supabase
-            .from('raw_trade_data')
-            .insert({
-              user_id: user.id,
-              file_name: file.name,
-              headers: csvHeaders,
-              data: JSON.parse(JSON.stringify({ 
-                mapping: headerMapping, 
-                rows: results.data, 
-                uploadSummary 
-              }))
-            })
-            .select()
-            .single();
+      Papa.parse<CsvRow>(text, {
+        header: true,
+        skipEmptyLines: true,
+        transformHeader: (header) => header.trim(),
+        complete: async (results) => {
+          console.log(`📊 CSV parsing complete:`);
+          console.log(`  - Total rows: ${results.data.length}`);
+          console.log(`  - Headers: ${results.meta?.fields?.join(', ')}`);
+          console.log(`  - Parse errors: ${results.errors.length}`);
           
-          if (rawError) throw rawError;
-
-          /* ------------ Calculate metrics & create session ------------ */
-          setLoadingMessage('Calculating trade metrics...');
-          const metrics = calculateMetrics(parsedTrades as Trade[]);
-
-          console.log('📊 Calculated metrics:', metrics);
-
-          const { data: newSession, error: sessionError } = await supabase
-            .from('trade_sessions')
-            .insert({
-              journal_id: journal.id,
-              user_id: user.id,
-              ...metrics,
-              raw_data_id: rawData.id
-            })
-            .select()
-            .single();
-          
-          if (sessionError) throw sessionError;
-
-          /* ------------ Insert trades with database-level duplicate handling ------------ */
-          setLoadingMessage(`Inserting ${parsedTrades.length} trades...`);
-          const tradesData = parsedTrades.map((t) => ({
-            ...t,
-            session_id: newSession.id,
-            user_id: user.id,
-            journal_id: journal.id
-          }));
-          
-          // Use database-level duplicate handling with ON CONFLICT
-          let insertedCount = 0;
-          let duplicateCount = 0;
-          
-          for (const trade of tradesData) {
-            try {
-              const { error: insertError } = await supabase.from('trades').insert(trade);
-              if (insertError) {
-                // Check if it's a duplicate constraint violation
-                if (insertError.message.includes('duplicate') || insertError.message.includes('unique')) {
-                  duplicateCount++;
-                  console.log(`🚫 Duplicate trade skipped: ${trade.symbol} at ${trade.datetime}`);
-                } else {
-                  throw insertError;
-                }
-              } else {
-                insertedCount++;
-              }
-            } catch (error) {
-              console.error('Error inserting trade:', error);
-              throw error;
-            }
+          if (results.errors.length > 0) {
+            console.log(`❌ Parse errors:`, results.errors);
           }
 
-          console.log(`📊 Insert results: ${insertedCount} inserted, ${duplicateCount} duplicates skipped`);
-
-          /* ------------ Update upload summary ------------ */
-          uploadSummary.newEntriesInserted = insertedCount;
-          uploadSummary.duplicatesSkipped = duplicateCount;
-
-          /* ------------ Optional AI insights ------------ */
           try {
-            setLoadingMessage('Generating AI insights...');
-            const { data: insights, error: insightsError } = await supabase.functions.invoke<
-              Partial<Tables<'trade_sessions'>>
-            >('analyze-trades', { body: { trades: tradesData.slice(0, 100) } });
-            
-            if (!insightsError && insights) {
-              await supabase.from('trade_sessions').update(insights).eq('id', newSession.id);
-            }
-          } catch (err) {
-            console.warn('AI insights failed:', err);
+            await processCSVData(results, file.name, uploadTimestamp);
+          } catch (error) {
+            console.error('❌ Error processing CSV data:', error);
+            toast({ 
+              title: 'Processing Error', 
+              description: (error as Error).message, 
+              variant: 'destructive' 
+            });
+            setLoadingMessage('');
           }
-
-          /* ------------ Show success notification with duplicate info ------------ */
-          const successMessage = uploadSummary.duplicatesSkipped > 0
-            ? `Successfully inserted ${uploadSummary.newEntriesInserted} new trades. ${uploadSummary.duplicatesSkipped} duplicates were skipped.`
-            : `Successfully inserted ${uploadSummary.newEntriesInserted} trades.`;
-
-          toast({
-            title: 'Upload Complete!',
-            description: successMessage
-          });
-
-          // Show additional notification for duplicates if any
-          if (uploadSummary.duplicatesSkipped > 0) {
-            setTimeout(() => {
-              toast({
-                title: 'Duplicate Trades Found',
-                description: `${uploadSummary.duplicatesSkipped} duplicate trades were identified and skipped to prevent data duplication.`,
-                variant: 'default'
-              });
-            }, 2000);
-          }
-
-          setLoadingMessage('');
-          window.location.reload();
-        } catch (err) {
-          console.error('Error processing CSV:', err);
+        },
+        error: (error) => {
+          console.error('❌ CSV parsing error:', error);
           toast({ 
-            title: 'Upload Error', 
-            description: (err as Error).message, 
+            title: 'CSV Parsing Error', 
+            description: error.message, 
             variant: 'destructive' 
           });
           setLoadingMessage('');
         }
-      },
-      error: (error) => {
-        console.error('CSV parsing error:', error);
-        toast({ 
-          title: 'CSV Parsing Error', 
-          description: error.message, 
-          variant: 'destructive' 
+      });
+    } catch (error) {
+      console.error('❌ File reading error:', error);
+      toast({ 
+        title: 'File Error', 
+        description: 'Failed to read the CSV file. Please try again.', 
+        variant: 'destructive' 
+      });
+      setLoadingMessage('');
+    }
+  };
+
+  const processCSVData = async (results: Papa.ParseResult<CsvRow>, fileName: string, uploadTimestamp: string) => {
+    const csvHeaders = results.meta?.fields || [];
+    const csvDataSample = results.data.slice(0, 3);
+
+    /* ------------ Validate trading CSV ------------ */
+    setLoadingMessage('Validating CSV data...');
+    const { data: validationData, error: validationError } = await supabase.functions.invoke<
+      { is_trading_related: boolean }
+    >('validate-csv-content', { body: { csvHeaders, csvDataSample } });
+    
+    if (validationError) throw validationError;
+    if (!validationData?.is_trading_related) {
+      throw new Error('The uploaded CSV does not appear to contain trading data.');
+    }
+
+    /* ------------ AI column mapping (Gemini) ------------ */
+    setLoadingMessage('Mapping CSV columns...');
+    const { data: mappingData, error: mappingError } = await supabase.functions.invoke<
+      { mapping: Record<string, string> }
+    >('map-columns-with-gemini', { body: { csvHeaders, csvDataSample } });
+    
+    if (mappingError) throw mappingError;
+    const headerMapping = mappingData?.mapping || {};
+
+    console.log('🗺️ Column Mapping:', headerMapping);
+
+    const getVal = (row: CsvRow, key: string) => {
+      const header = headerMapping[key];
+      return header ? row[header] : undefined;
+    };
+
+    /* ------------ Parse and validate trades ------------ */
+    setLoadingMessage('Processing trade data...');
+    const summary: TradeAnalysisSummary = {
+      totalRows: results.data.length,
+      duplicatesSkipped: 0,
+      newEntriesInserted: 0,
+      fileName,
+      uploadTimestamp,
+      parseErrors: 0,
+      validTrades: 0,
+      duplicateEntries: []
+    };
+
+    const validTrades: Array<Omit<TablesInsert<'trades'>, 'user_id' | 'journal_id' | 'session_id'>> = [];
+    const parseErrors: string[] = [];
+
+    console.log(`🔄 Processing ${results.data.length} CSV rows...`);
+
+    for (let index = 0; index < results.data.length; index++) {
+      const row = results.data[index];
+      
+      try {
+        const datetimeVal = getVal(row, 'datetime') || row.Timestamp || row.Time || row.Date;
+        const rawPnlValue = getVal(row, 'pnl') || row.PnL || row['P/L'] || row.NetPL || row.Profit || row.Loss || row.profit_loss;
+
+        if (!datetimeVal) {
+          parseErrors.push(`Row ${index + 1}: Missing datetime`);
+          continue;
+        }
+
+        const trade = {
+          datetime: new Date(datetimeVal as string).toISOString(),
+          symbol: (getVal(row, 'symbol') || row.Symbol || row.Instrument)?.toString().trim().toUpperCase() || null,
+          side: (getVal(row, 'side') || row.Side || row.Action || row.Type)?.toString().trim().toUpperCase() || null,
+          qty: safeParseFloat(getVal(row, 'qty') || row.Qty || row.Quantity || row.Size),
+          price: safeParseFloat(getVal(row, 'price') || row.Price || row.EntryPrice || row.ExitPrice),
+          pnl: safeParseFloat(rawPnlValue),
+          notes: ((getVal(row, 'notes') || row.Notes || row.Comment || '') as string).trim() || null,
+          strategy: ((getVal(row, 'strategy') || row.Strategy || '') as string).trim() || null,
+          tags: null,
+          image_url: null
+        };
+
+        console.log(`📊 Row ${index + 1} parsed:`, {
+          symbol: trade.symbol,
+          side: trade.side,
+          qty: trade.qty,
+          price: trade.price,
+          pnl: trade.pnl,
+          rawPnl: rawPnlValue
         });
-        setLoadingMessage('');
+
+        // Validate trade data
+        const validation = validateTradeData(trade);
+        if (!validation.isValid) {
+          parseErrors.push(`Row ${index + 1}: ${validation.errors.join(', ')}`);
+          continue;
+        }
+
+        // Skip mock data
+        if (isMockData(trade)) {
+          console.warn(`⚠️ Row ${index + 1}: Detected mock data, skipping`);
+          continue;
+        }
+
+        validTrades.push(trade);
+      } catch (error) {
+        console.error(`❌ Error parsing row ${index + 1}:`, error);
+        parseErrors.push(`Row ${index + 1}: ${(error as Error).message}`);
       }
+    }
+
+    summary.validTrades = validTrades.length;
+    summary.parseErrors = parseErrors.length;
+
+    console.log(`📊 Processing summary:`);
+    console.log(`  - Valid trades: ${summary.validTrades}`);
+    console.log(`  - Parse errors: ${summary.parseErrors}`);
+    
+    if (parseErrors.length > 0) {
+      console.log(`❌ Parse errors:`, parseErrors.slice(0, 10)); // Log first 10 errors
+    }
+
+    if (validTrades.length === 0) {
+      throw new Error(`No valid trades found. Found ${parseErrors.length} parsing errors. Please check your CSV format.`);
+    }
+
+    /* ------------ Clean up existing mock data ------------ */
+    setLoadingMessage('Cleaning up existing mock data...');
+    try {
+      await supabase.rpc('cleanup_mock_data', { user_uuid: user.id });
+    } catch (error) {
+      console.warn('⚠️ Could not clean up mock data:', error);
+    }
+
+    /* ------------ Create trade session ------------ */
+    setLoadingMessage('Creating trade session...');
+    
+    // Store raw data first
+    const { data: rawData, error: rawError } = await supabase
+      .from('raw_trade_data')
+      .insert({
+        user_id: user.id,
+        file_name: fileName,
+        headers: csvHeaders,
+        data: { 
+          mapping: headerMapping, 
+          rows: results.data,
+          summary
+        }
+      })
+      .select()
+      .single();
+    
+    if (rawError) throw rawError;
+
+    // Calculate metrics
+    const metrics = calculateMetrics(validTrades as Trade[]);
+    console.log('📊 Calculated metrics:', metrics);
+
+    // Create session
+    const { data: newSession, error: sessionError } = await supabase
+      .from('trade_sessions')
+      .insert({
+        journal_id: journal.id,
+        user_id: user.id,
+        raw_data_id: rawData.id,
+        ...metrics
+      })
+      .select()
+      .single();
+    
+    if (sessionError) throw sessionError;
+
+    /* ------------ Insert trades with proper transaction handling ------------ */
+    setLoadingMessage(`Inserting ${validTrades.length} trades...`);
+    
+    // Use a single transaction for all inserts
+    const tradesData = validTrades.map((t) => ({
+      ...t,
+      session_id: newSession.id,
+      user_id: user.id,
+      journal_id: journal.id
+    }));
+
+    let insertedCount = 0;
+    let duplicateCount = 0;
+    const batchSize = 100; // Process in batches for better performance
+
+    for (let i = 0; i < tradesData.length; i += batchSize) {
+      const batch = tradesData.slice(i, i + batchSize);
+      
+      try {
+        const { data: insertedTrades, error: batchError } = await supabase
+          .from('trades')
+          .insert(batch)
+          .select('id');
+
+        if (batchError) {
+          // If batch insert fails due to duplicates, try individual inserts
+          if (batchError.message.includes('duplicate') || batchError.message.includes('unique')) {
+            console.log(`⚠️ Batch insert failed due to duplicates, trying individual inserts...`);
+            
+            for (const trade of batch) {
+              try {
+                const { error: singleError } = await supabase.from('trades').insert(trade);
+                if (singleError) {
+                  if (singleError.message.includes('duplicate') || singleError.message.includes('unique')) {
+                    duplicateCount++;
+                    summary.duplicateEntries.push({
+                      datetime: trade.datetime,
+                      symbol: trade.symbol || '',
+                      side: trade.side || '',
+                      qty: trade.qty || 0,
+                      price: trade.price || 0,
+                      pnl: trade.pnl || 0
+                    });
+                  } else {
+                    throw singleError;
+                  }
+                } else {
+                  insertedCount++;
+                }
+              } catch (error) {
+                console.error('❌ Error inserting individual trade:', error);
+                throw error;
+              }
+            }
+          } else {
+            throw batchError;
+          }
+        } else {
+          insertedCount += insertedTrades?.length || 0;
+        }
+      } catch (error) {
+        console.error(`❌ Error inserting batch ${i}-${i + batchSize}:`, error);
+        throw error;
+      }
+    }
+
+    summary.newEntriesInserted = insertedCount;
+    summary.duplicatesSkipped = duplicateCount;
+
+    console.log(`📊 Insert results: ${insertedCount} inserted, ${duplicateCount} duplicates skipped`);
+
+    /* ------------ Generate AI insights (optional) ------------ */
+    try {
+      setLoadingMessage('Generating AI insights...');
+      const { data: insights, error: insightsError } = await supabase.functions.invoke<
+        Partial<Tables<'trade_sessions'>>
+      >('analyze-trades', { body: { trades: tradesData.slice(0, 100) } });
+      
+      if (!insightsError && insights) {
+        await supabase.from('trade_sessions').update(insights).eq('id', newSession.id);
+      }
+    } catch (err) {
+      console.warn('⚠️ AI insights failed:', err);
+    }
+
+    /* ------------ Show success notification ------------ */
+    const successMessage = summary.duplicatesSkipped > 0
+      ? `Successfully inserted ${summary.newEntriesInserted} new trades. ${summary.duplicatesSkipped} duplicates were skipped.`
+      : `Successfully inserted ${summary.newEntriesInserted} trades.`;
+
+    toast({
+      title: 'Upload Complete!',
+      description: successMessage
     });
+
+    if (summary.parseErrors > 0) {
+      setTimeout(() => {
+        toast({
+          title: 'Some Rows Skipped',
+          description: `${summary.parseErrors} rows had parsing errors and were skipped. Check the console for details.`,
+          variant: 'default'
+        });
+      }, 2000);
+    }
+
+    if (summary.duplicatesSkipped > 0) {
+      setTimeout(() => {
+        toast({
+          title: 'Duplicate Trades Found',
+          description: `${summary.duplicatesSkipped} duplicate trades were identified and skipped to prevent data duplication.`,
+          variant: 'default'
+        });
+      }, 4000);
+    }
+
+    setLoadingMessage('');
+    window.location.reload();
   };
 
   return { processCsv, loadingMessage };
