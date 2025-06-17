@@ -82,9 +82,14 @@ export type Database = {
           expectancy: number | null
           id: string
           journal_id: string | null
+          largest_loss: number | null
+          largest_win: number | null
           max_drawdown: number | null
+          max_loss_streak: number | null
+          max_win_streak: number | null
           profit_factor: number | null
           raw_data_id: string | null
+          reward_risk_ratio: number | null
           time_data: Json | null
           total_pnl: number | null
           total_trades: number | null
@@ -105,9 +110,14 @@ export type Database = {
           expectancy?: number | null
           id?: string
           journal_id?: string | null
+          largest_loss?: number | null
+          largest_win?: number | null
           max_drawdown?: number | null
+          max_loss_streak?: number | null
+          max_win_streak?: number | null
           profit_factor?: number | null
           raw_data_id?: string | null
+          reward_risk_ratio?: number | null
           time_data?: Json | null
           total_pnl?: number | null
           total_trades?: number | null
@@ -128,9 +138,14 @@ export type Database = {
           expectancy?: number | null
           id?: string
           journal_id?: string | null
+          largest_loss?: number | null
+          largest_win?: number | null
           max_drawdown?: number | null
+          max_loss_streak?: number | null
+          max_win_streak?: number | null
           profit_factor?: number | null
           raw_data_id?: string | null
+          reward_risk_ratio?: number | null
           time_data?: Json | null
           total_pnl?: number | null
           total_trades?: number | null

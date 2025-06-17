@@ -22,67 +22,71 @@ const JournalDetail = () => {
 
   const [showUploadView, setShowUploadView] = useState(false);
 
-  const { data: journal, isLoading: isJournalLoading, error: journalError } = useQuery<Journal | null>({
-    queryKey: ['journal', journalId],
+  // Fetch journal and sessions in parallel to avoid waterfall
+  const { data: journalData, isLoading: isJournalLoading, error: journalError } = useQuery<{
+    journal: Journal;
+    sessions: TradeSessionWithTrades[];
+  }>({
+    queryKey: ['journalWithSessions', journalId],
     queryFn: async () => {
-      console.log('Fetching journal with ID:', journalId);
+      console.log('Fetching journal and sessions for ID:', journalId);
       if (!journalId) {
-        console.log('No journalId provided');
-        return null;
+        throw new Error('No journal ID provided');
       }
-      const { data, error } = await supabase.from('journals').select('*').eq('id', journalId).single();
-      if (error) {
-        console.error('Error fetching journal:', error);
-        toast({ title: "Error", description: "Could not fetch journal details.", variant: "destructive" });
-        throw error;
-      }
-      console.log('Journal fetched:', data);
-      return data;
-    },
-    enabled: !!journalId,
-  });
 
-  const { data: sessions, isLoading: isSessionsLoading, error: sessionsError } = useQuery({
-    queryKey: ['sessions', journalId],
-    queryFn: async () => {
-      console.log('Fetching sessions for journal:', journalId);
-      if (!journalId) return [];
-      const { data, error } = await supabase
-        .from('trade_sessions')
-        .select('*, trades(*)')
-        .eq('journal_id', journalId)
-        .order('created_at', { ascending: false });
-      if (error) {
-        console.error('Error fetching sessions:', error);
-        throw error;
+      // Fetch journal and sessions in parallel
+      const [journalResponse, sessionsResponse] = await Promise.all([
+        supabase.from('journals').select('*').eq('id', journalId).single(),
+        supabase
+          .from('trade_sessions')
+          .select('*, trades(*)')
+          .eq('journal_id', journalId)
+          .order('created_at', { ascending: false })
+      ]);
+
+      if (journalResponse.error) {
+        console.error('Error fetching journal:', journalResponse.error);
+        toast({ title: "Error", description: "Could not fetch journal details.", variant: "destructive" });
+        throw journalResponse.error;
       }
-      console.log('Sessions fetched:', data?.length || 0, 'sessions');
-      return (data as TradeSessionWithTrades[]) || [];
+
+      if (sessionsResponse.error) {
+        console.error('Error fetching sessions:', sessionsResponse.error);
+        throw sessionsResponse.error;
+      }
+
+      console.log('Journal fetched:', journalResponse.data);
+      console.log('Sessions fetched:', sessionsResponse.data?.length || 0, 'sessions');
+
+      return {
+        journal: journalResponse.data,
+        sessions: (sessionsResponse.data as TradeSessionWithTrades[]) || []
+      };
     },
     enabled: !!journalId,
   });
 
   console.log('Current state:', {
     isJournalLoading,
-    isSessionsLoading,
     journalError,
-    sessionsError,
-    journal: !!journal,
-    sessionsCount: sessions?.length,
+    journal: !!journalData?.journal,
+    sessionsCount: journalData?.sessions.length,
     showUploadView
   });
 
-  if (isJournalLoading || isSessionsLoading) {
+  if (isJournalLoading) {
     return <JournalLoadingView />;
   }
 
-  if (journalError || sessionsError) {
-    return <JournalErrorView error={journalError || sessionsError} />;
+  if (journalError) {
+    return <JournalErrorView error={journalError} />;
   }
 
-  if (!journal) {
+  if (!journalData?.journal) {
     return <JournalErrorView notFound />;
   }
+
+  const { journal, sessions } = journalData;
 
   if (showUploadView || !sessions || sessions.length === 0) {
     console.log('Showing upload view');

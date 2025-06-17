@@ -14,14 +14,34 @@ import { toast } from 'sonner';
 import { TrendingUp, LogIn } from 'lucide-react';
 import { useAuth } from '@/components/AuthProvider';
 
+// Enhanced validation schemas with sanitization
+const sanitizeString = (str: string) => {
+  return str.trim().replace(/[<>\"']/g, ''); // Basic XSS prevention
+};
+
 const loginSchema = z.object({
-  email: z.string().email({ message: 'Invalid email address.' }),
-  password: z.string().min(6, { message: 'Password must be at least 6 characters.' }),
+  email: z.string()
+    .email({ message: 'Invalid email address.' })
+    .transform(sanitizeString)
+    .refine((email) => email.length > 0, { message: 'Email cannot be empty.' }),
+  password: z.string()
+    .min(6, { message: 'Password must be at least 6 characters.' })
+    .max(128, { message: 'Password must be less than 128 characters.' })
+    .transform(sanitizeString),
 });
 
 const signupSchema = z.object({
-  email: z.string().email({ message: 'Invalid email address.' }),
-  password: z.string().min(6, { message: 'Password must be at least 6 characters.' }),
+  email: z.string()
+    .email({ message: 'Invalid email address.' })
+    .transform(sanitizeString)
+    .refine((email) => email.length > 0, { message: 'Email cannot be empty.' }),
+  password: z.string()
+    .min(6, { message: 'Password must be at least 6 characters.' })
+    .max(128, { message: 'Password must be less than 128 characters.' })
+    .regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/, { 
+      message: 'Password must contain at least one uppercase letter, one lowercase letter, and one number.' 
+    })
+    .transform(sanitizeString),
 });
 
 const Auth = () => {
@@ -50,33 +70,47 @@ const Auth = () => {
 
   const onSubmit = async (values: z.infer<typeof formSchema>) => {
     setLoading(true);
-    if (isLoginView) {
-      const { error } = await supabase.auth.signInWithPassword({
-        email: values.email,
-        password: values.password,
-      });
-      if (error) {
-        toast.error(error.message);
+    try {
+      if (isLoginView) {
+        const { error } = await supabase.auth.signInWithPassword({
+          email: values.email,
+          password: values.password,
+        });
+        if (error) {
+          if (error.message.includes('Invalid login credentials')) {
+            toast.error('Invalid email or password. Please check your credentials and try again.');
+          } else {
+            toast.error(error.message);
+          }
+        } else {
+          toast.success('Logged in successfully!');
+          navigate(from, { replace: true });
+        }
       } else {
-        toast.success('Logged in successfully!');
-        navigate(from, { replace: true });
+        const { error } = await supabase.auth.signUp({
+          email: values.email,
+          password: values.password,
+          options: {
+            emailRedirectTo: `${window.location.origin}${from}`,
+          },
+        });
+        if (error) {
+          if (error.message.includes('User already registered')) {
+            toast.error('An account with this email already exists. Please try logging in instead.');
+          } else {
+            toast.error(error.message);
+          }
+        } else {
+          toast.info('Check your email for the confirmation link!');
+          form.reset();
+        }
       }
-    } else {
-      const { error } = await supabase.auth.signUp({
-        email: values.email,
-        password: values.password,
-        options: {
-          emailRedirectTo: `${window.location.origin}${from}`,
-        },
-      });
-      if (error) {
-        toast.error(error.message);
-      } else {
-        toast.info('Check your email for the confirmation link!');
-        form.reset();
-      }
+    } catch (error) {
+      console.error('Authentication error:', error);
+      toast.error('An unexpected error occurred. Please try again.');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
   
   const cardVariants = {
@@ -123,7 +157,12 @@ const Auth = () => {
                                     <FormItem>
                                         <FormLabel>Email</FormLabel>
                                         <FormControl>
-                                            <Input placeholder="you@example.com" {...field} />
+                                            <Input 
+                                              placeholder="you@example.com" 
+                                              {...field} 
+                                              type="email"
+                                              autoComplete={isLoginView ? "email" : "username"}
+                                            />
                                         </FormControl>
                                         <FormMessage />
                                     </FormItem>
@@ -136,7 +175,12 @@ const Auth = () => {
                                     <FormItem>
                                         <FormLabel>Password</FormLabel>
                                         <FormControl>
-                                            <Input type="password" placeholder="••••••••" {...field} />
+                                            <Input 
+                                              type="password" 
+                                              placeholder="••••••••" 
+                                              {...field} 
+                                              autoComplete={isLoginView ? "current-password" : "new-password"}
+                                            />
                                         </FormControl>
                                         <FormMessage />
                                     </FormItem>

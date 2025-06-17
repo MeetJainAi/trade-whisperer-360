@@ -46,7 +46,12 @@ const JournalDashboard = ({ journal, sessions, onUploadNew }: JournalDashboardPr
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-4">
-          <Button variant="outline" size="icon" onClick={() => navigate('/journals')}>
+          <Button 
+            variant="outline" 
+            size="icon" 
+            onClick={() => navigate('/journals')}
+            aria-label="Back to journals"
+          >
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div>
@@ -54,7 +59,7 @@ const JournalDashboard = ({ journal, sessions, onUploadNew }: JournalDashboardPr
             <p className="text-muted-foreground">{journal.description || 'Trading Journal Dashboard'}</p>
           </div>
         </div>
-        <Button onClick={onUploadNew}>
+        <Button onClick={onUploadNew} aria-label="Upload new trading session">
           <Upload className="mr-2 h-4 w-4" />
           Upload New Session
         </Button>
@@ -67,9 +72,9 @@ const JournalDashboard = ({ journal, sessions, onUploadNew }: JournalDashboardPr
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">Total P&L</CardTitle>
               {aggregatedMetrics.total_pnl >= 0 ? (
-                <TrendingUp className="h-4 w-4 text-green-600" />
+                <TrendingUp className="h-4 w-4 text-green-600" aria-label="Positive trend" />
               ) : (
-                <TrendingDown className="h-4 w-4 text-red-600" />
+                <TrendingDown className="h-4 w-4 text-red-600" aria-label="Negative trend" />
               )}
             </CardHeader>
             <CardContent>
@@ -141,6 +146,15 @@ const JournalDashboard = ({ journal, sessions, onUploadNew }: JournalDashboardPr
                     key={session.id}
                     className="cursor-pointer hover:bg-slate-50"
                     onClick={() => handleSessionClick(session.id)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        handleSessionClick(session.id);
+                      }
+                    }}
+                    aria-label={`View session from ${new Date(session.created_at).toLocaleDateString()}`}
                   >
                     <TableCell className="font-medium">
                       {new Date(session.created_at).toLocaleDateString()}

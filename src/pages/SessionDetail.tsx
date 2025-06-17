@@ -28,19 +28,25 @@ const SessionDetail = () => {
         console.log('No sessionId provided');
         return null;
       }
-      const { data, error } = await supabase
-        .from('trade_sessions')
-        .select('*, trades(*)')
-        .eq('id', sessionId)
-        .single();
       
-      if (error) {
-        console.error('Error fetching session:', error);
-        toast({ title: "Error", description: "Could not fetch session details.", variant: "destructive" });
+      try {
+        const { data, error } = await supabase
+          .from('trade_sessions')
+          .select('*, trades(*)')
+          .eq('id', sessionId)
+          .single();
+        
+        if (error) {
+          console.error('Error fetching session:', error);
+          toast({ title: "Error", description: "Could not fetch session details.", variant: "destructive" });
+          throw error;
+        }
+        console.log('Session fetched:', data);
+        return data as TradeSessionWithTrades;
+      } catch (error) {
+        console.error('Failed to fetch session:', error);
         throw error;
       }
-      console.log('Session fetched:', data);
-      return data as TradeSessionWithTrades;
     },
     enabled: !!sessionId,
   });
@@ -49,17 +55,23 @@ const SessionDetail = () => {
     queryKey: ['journal', journalId],
     queryFn: async () => {
       if (!journalId) return null;
-      const { data, error } = await supabase
-        .from('journals')
-        .select('*')
-        .eq('id', journalId)
-        .single();
       
-      if (error) {
-        console.error('Error fetching journal:', error);
+      try {
+        const { data, error } = await supabase
+          .from('journals')
+          .select('*')
+          .eq('id', journalId)
+          .single();
+        
+        if (error) {
+          console.error('Error fetching journal:', error);
+          return null;
+        }
+        return data;
+      } catch (error) {
+        console.error('Failed to fetch journal:', error);
         return null;
       }
-      return data;
     },
     enabled: !!journalId,
   });
@@ -88,7 +100,12 @@ const SessionDetail = () => {
     <div className="flex flex-col min-h-screen bg-slate-50">
       <div className="p-4 md:p-8 border-b bg-white">
         <div className="flex items-center gap-4">
-          <Button variant="outline" size="icon" onClick={handleBackToJournal}>
+          <Button 
+            variant="outline" 
+            size="icon" 
+            onClick={handleBackToJournal}
+            aria-label="Back to journal"
+          >
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div>
