@@ -30,7 +30,7 @@ interface TradeAnalysisSummary {
   }>;
 }
 
-/** Enhanced robust float parser handling $, commas, spaces, (neg), trailing -neg, etc. */
+/** Enhanced robust float parser handling all broker negative value formats */
 const safeParseFloat = (value: unknown): number => {
   if (typeof value === 'number') return value;
   if (typeof value === 'string') {
@@ -43,31 +43,33 @@ const safeParseFloat = (value: unknown): number => {
 
     let isNegative = false;
 
-    // Check for parentheses indicating negative (12.50) -> -12.50
-    if (cleanValue.startsWith('(') && cleanValue.endsWith(')')) {
+    // Handle multiple parentheses formats: (500), ($500), (500.00), etc.
+    const parenthesesMatch = cleanValue.match(/^\s*\(\s*([^)]+)\s*\)\s*$/);
+    if (parenthesesMatch) {
       isNegative = true;
-      cleanValue = cleanValue.slice(1, -1);
+      cleanValue = parenthesesMatch[1];
     }
 
-    // Check for trailing minus (12.50-) -> -12.50
-    if (cleanValue.endsWith('-')) {
+    // Check for trailing minus: 500-, $500-, 500.00-, etc.
+    if (cleanValue.match(/.*-\s*$/)) {
       isNegative = true;
-      cleanValue = cleanValue.slice(0, -1);
+      cleanValue = cleanValue.replace(/-\s*$/, '');
     }
 
-    // Check for leading minus
-    if (cleanValue.startsWith('-')) {
+    // Check for leading minus (but not if we already detected negative from parentheses)
+    if (!isNegative && cleanValue.startsWith('-')) {
       isNegative = true;
       cleanValue = cleanValue.slice(1);
     }
 
-    // Remove currency symbols, commas, spaces, and other non-numeric characters
-    cleanValue = cleanValue.replace(/[$,%\s€£¥₹¢]+/g, '');
+    // Remove all currency symbols, commas, spaces, and other non-numeric characters
+    // Keep only digits, dots, and handle multiple currencies
+    cleanValue = cleanValue.replace(/[$,%\s€£¥₹¢₨₩₪₫₡₦₨₱₽₪₴₸₼₿]+/g, '');
     
-    // Keep only digits and dots
+    // Remove any remaining non-numeric characters except dots
     cleanValue = cleanValue.replace(/[^0-9.]/g, '');
     
-    // Handle multiple dots - keep only the first one
+    // Handle multiple dots - keep only the first one as decimal separator
     const dotIndex = cleanValue.indexOf('.');
     if (dotIndex !== -1) {
       const beforeDot = cleanValue.substring(0, dotIndex);
@@ -75,10 +77,15 @@ const safeParseFloat = (value: unknown): number => {
       cleanValue = beforeDot + '.' + afterDot;
     }
 
+    // Handle edge case where we might have just a dot
+    if (cleanValue === '.' || cleanValue === '') {
+      return 0;
+    }
+
     const parsed = parseFloat(cleanValue);
     const result = isNaN(parsed) ? 0 : parsed;
     
-    return isNegative ? -result : result;
+    return isNegative ? -Math.abs(result) : result;
   }
   return 0;
 };
@@ -207,6 +214,12 @@ export const useProcessCsv = (journal: Journal) => {
                 pnl: safeParseFloat(getVal(row, 'pnl') || row.PnL || row['P/L'] || row.NetPL || row.Profit || row.Loss),
                 notes: ((getVal(row, 'notes') || row.Notes || row.Comment || '') as string).trim() || null
               };
+
+              // Debug log for negative value handling
+              const originalPnlValue = getVal(row, 'pnl') || row.PnL || row['P/L'] || row.NetPL || row.Profit || row.Loss;
+              if (originalPnlValue && originalPnlValue.toString().includes('(')) {
+                console.log(`Processing negative value: "${originalPnlValue}" -> ${trade.pnl}`);
+              }
 
               // Skip rows with invalid or mock data
               if (isMockData(trade)) {
