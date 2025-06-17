@@ -1,16 +1,15 @@
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState } from 'react';
 import { useAuth } from '@/components/AuthProvider';
 import { supabase } from '@/integrations/supabase/client';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from '@/components/ui/use-toast';
 import { Tables } from '@/integrations/supabase/types';
-import { calculateMetrics } from '@/lib/trade-metrics';
-import AnalysisView from '@/components/AutoJournal/AnalysisView';
 import { useParams } from 'react-router-dom';
 import JournalUploadSection from '@/components/JournalDetail/JournalUploadSection';
 import JournalLoadingView from '@/components/JournalDetail/JournalLoadingView';
 import JournalErrorView from '@/components/JournalDetail/JournalErrorView';
+import JournalDashboard from '@/components/JournalDetail/JournalDashboard';
 
 type TradeSessionWithTrades = Tables<'trade_sessions'> & { trades: Tables<'trades'>[] };
 type Journal = Tables<'journals'>;
@@ -48,7 +47,11 @@ const JournalDetail = () => {
     queryFn: async () => {
       console.log('Fetching sessions for journal:', journalId);
       if (!journalId) return [];
-      const { data, error } = await supabase.from('trade_sessions').select('*, trades(*)').eq('journal_id', journalId).order('created_at', { ascending: true });
+      const { data, error } = await supabase
+        .from('trade_sessions')
+        .select('*, trades(*)')
+        .eq('journal_id', journalId)
+        .order('created_at', { ascending: false });
       if (error) {
         console.error('Error fetching sessions:', error);
         throw error;
@@ -59,41 +62,6 @@ const JournalDetail = () => {
     enabled: !!journalId,
   });
 
-  useEffect(() => {
-    console.log('Sessions loading state:', isSessionsLoading, 'Sessions data:', sessions?.length);
-    if (!isSessionsLoading && (!sessions || sessions.length === 0)) {
-      console.log('No sessions found, showing upload view');
-      setShowUploadView(true);
-    }
-  }, [sessions, isSessionsLoading]);
-
-  const allTrades = useMemo(() => {
-    const trades = sessions?.flatMap(session => session.trades) || [];
-    console.log('All trades calculated:', trades.length);
-    return trades;
-  }, [sessions]);
-
-  const journalMetricsAndTrades = useMemo(() => {
-    if (!sessions || allTrades.length === 0) {
-      console.log('No metrics calculated - no sessions or trades');
-      return null;
-    }
-    const metrics = calculateMetrics(allTrades);
-    console.log('Metrics calculated:', metrics);
-    return {
-      ...metrics,
-      id: journalId!,
-      created_at: sessions?.[0]?.created_at || new Date().toISOString(),
-      user_id: user!.id,
-      journal_id: journalId!,
-      trades: allTrades,
-      ai_strengths: sessions[sessions.length - 1]?.ai_strengths || [],
-      ai_mistakes: sessions[sessions.length - 1]?.ai_mistakes || [],
-      ai_fixes: sessions[sessions.length - 1]?.ai_fixes || [],
-      ai_key_insight: sessions[sessions.length - 1]?.ai_key_insight || null,
-    } as unknown as TradeSessionWithTrades;
-  }, [allTrades, sessions, journalId, user]);
-
   console.log('Current state:', {
     isJournalLoading,
     isSessionsLoading,
@@ -101,8 +69,7 @@ const JournalDetail = () => {
     sessionsError,
     journal: !!journal,
     sessionsCount: sessions?.length,
-    showUploadView,
-    journalMetricsAndTrades: !!journalMetricsAndTrades
+    showUploadView
   });
 
   if (isJournalLoading || isSessionsLoading) {
@@ -117,13 +84,13 @@ const JournalDetail = () => {
     return <JournalErrorView notFound />;
   }
 
-  if (showUploadView || !journalMetricsAndTrades) {
+  if (showUploadView || !sessions || sessions.length === 0) {
     console.log('Showing upload view');
-    return <JournalUploadSection journal={journal} />;
+    return <JournalUploadSection journal={journal} onUploadComplete={() => setShowUploadView(false)} />;
   }
 
-  console.log('Showing analysis view');
-  return <AnalysisView currentSession={journalMetricsAndTrades} onUploadNew={() => setShowUploadView(true)} />;
+  console.log('Showing journal dashboard');
+  return <JournalDashboard journal={journal} sessions={sessions} onUploadNew={() => setShowUploadView(true)} />;
 };
 
 export default JournalDetail;

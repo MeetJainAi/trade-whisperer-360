@@ -7,9 +7,10 @@ import UploadCard from '@/components/JournalUpload/UploadCard';
 
 interface JournalUploadSectionProps {
   journal: Tables<'journals'>;
+  onUploadComplete?: () => void;
 }
 
-const JournalUploadSection = ({ journal }: JournalUploadSectionProps) => {
+const JournalUploadSection = ({ journal, onUploadComplete }: JournalUploadSectionProps) => {
   const navigate = useNavigate();
 
   return (
@@ -20,11 +21,11 @@ const JournalUploadSection = ({ journal }: JournalUploadSectionProps) => {
         </Button>
         <div>
           <h1 className="text-2xl font-bold">{journal.name}</h1>
-          <p className="text-muted-foreground">Upload your first trade history file to get started.</p>
+          <p className="text-muted-foreground">Upload your trade history file to get started.</p>
         </div>
       </div>
       <div className="flex-grow flex items-center justify-center">
-        <UploadCard journal={journal} />
+        <UploadCard journal={journal} onUploadComplete={onUploadComplete} />
       </div>
     </div>
   );

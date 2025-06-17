@@ -8,11 +8,12 @@ import { useProcessCsv } from '@/hooks/useProcessCsv';
 
 interface UploadCardProps {
   journal: Tables<'journals'>;
+  onUploadComplete?: () => void;
 }
 
-const UploadCard = ({ journal }: UploadCardProps) => {
-  const { createSampleData, loadingMessage: sampleDataLoadingMessage } = useCreateSampleData(journal);
-  const { processCsv, loadingMessage: csvLoadingMessage } = useProcessCsv(journal);
+const UploadCard = ({ journal, onUploadComplete }: UploadCardProps) => {
+  const { createSampleData, loadingMessage: sampleDataLoadingMessage } = useCreateSampleData(journal, onUploadComplete);
+  const { processCsv, loadingMessage: csvLoadingMessage } = useProcessCsv(journal, onUploadComplete);
 
   const handleFileUpload = (file: File) => {
     processCsv(file);
@@ -35,4 +36,3 @@ const UploadCard = ({ journal }: UploadCardProps) => {
 };
 
 export default UploadCard;
-
