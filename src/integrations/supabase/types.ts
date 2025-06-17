@@ -79,6 +79,7 @@ export type Database = {
           avg_win: number | null
           created_at: string
           equity_curve: Json | null
+          expectancy: number | null
           id: string
           journal_id: string | null
           max_drawdown: number | null
@@ -101,6 +102,7 @@ export type Database = {
           avg_win?: number | null
           created_at?: string
           equity_curve?: Json | null
+          expectancy?: number | null
           id?: string
           journal_id?: string | null
           max_drawdown?: number | null
@@ -123,6 +125,7 @@ export type Database = {
           avg_win?: number | null
           created_at?: string
           equity_curve?: Json | null
+          expectancy?: number | null
           id?: string
           journal_id?: string | null
           max_drawdown?: number | null
