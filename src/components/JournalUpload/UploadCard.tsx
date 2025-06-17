@@ -12,11 +12,18 @@ interface UploadCardProps {
 }
 
 const UploadCard = ({ journal, onUploadComplete }: UploadCardProps) => {
-  const { createSampleData, loadingMessage: sampleDataLoadingMessage } = useCreateSampleData(journal, onUploadComplete);
-  const { processCsv, loadingMessage: csvLoadingMessage } = useProcessCsv(journal, onUploadComplete);
+  const { createSampleData, loadingMessage: sampleDataLoadingMessage } = useCreateSampleData(journal);
+  const { processCsv, loadingMessage: csvLoadingMessage } = useProcessCsv(journal);
 
   const handleFileUpload = (file: File) => {
     processCsv(file);
+  };
+
+  const handleSampleDataCreated = () => {
+    createSampleData();
+    if (onUploadComplete) {
+      onUploadComplete();
+    }
   };
   
   const loadingMessage = sampleDataLoadingMessage || csvLoadingMessage;
@@ -29,7 +36,7 @@ const UploadCard = ({ journal, onUploadComplete }: UploadCardProps) => {
       </CardHeader>
       <CardContent>
         <UploadPlaceholder onFileUpload={handleFileUpload} loadingMessage={loadingMessage} />
-        <SampleDataButton onClick={createSampleData} loadingMessage={loadingMessage} />
+        <SampleDataButton onClick={handleSampleDataCreated} loadingMessage={loadingMessage} />
       </CardContent>
     </Card>
   );
