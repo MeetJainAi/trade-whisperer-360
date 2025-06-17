@@ -113,11 +113,6 @@ const isMockData = (trade: any): boolean => {
   if (mockSymbols.includes(symbol)) return true;
   if (symbol.includes('TEST') || symbol.includes('DEMO') || symbol.includes('SAMPLE')) return true;
   
-  const pnl = Math.abs(safeParseFloat(trade.pnl));
-  const price = safeParseFloat(trade.price);
-  
-  if (pnl > 0 && pnl % 100 === 0 && price > 0 && price % 10 === 0) return true;
-  
   return false;
 };
 
