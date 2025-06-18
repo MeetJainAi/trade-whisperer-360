@@ -79,6 +79,38 @@ const validateTradeData = (trade: any, rowIndex: number): { isValid: boolean; er
   return { isValid: errors.length === 0, errors };
 };
 
+/** Create a unique key for trade based on the database composite constraint */
+const createTradeUniqueKey = (trade: any): string => {
+  return [
+    trade.journal_id,
+    trade.datetime,
+    (trade.symbol || '').toString().toUpperCase().trim(),
+    (trade.side || '').toString().toUpperCase().trim(),
+    trade.qty,
+    trade.price,
+    trade.pnl
+  ].join('|');
+};
+
+/** Remove duplicate trades based on composite key */
+const deduplicateTrades = (trades: any[]): { unique: any[], duplicates: any[] } => {
+  const seen = new Set<string>();
+  const unique: any[] = [];
+  const duplicates: any[] = [];
+  
+  for (const trade of trades) {
+    const key = createTradeUniqueKey(trade);
+    if (seen.has(key)) {
+      duplicates.push(trade);
+    } else {
+      seen.add(key);
+      unique.push(trade);
+    }
+  }
+  
+  return { unique, duplicates };
+};
+
 export const useProcessCsv = (journal: Journal) => {
   const { user } = useAuth();
   const [loadingMessage, setLoadingMessage] = useState('');
@@ -378,8 +410,8 @@ export const useProcessCsv = (journal: Journal) => {
     
     if (sessionError) throw sessionError;
 
-    /* ------------ Insert trades with proper transaction handling ------------ */
-    setLoadingMessage(`Inserting ${validTrades.length} trades...`);
+    /* ------------ Prepare trades data and perform client-side de-duplication ------------ */
+    setLoadingMessage('Preparing trades data...');
     
     const tradesData = validTrades.map((t) => ({
       ...t,
@@ -388,71 +420,67 @@ export const useProcessCsv = (journal: Journal) => {
       journal_id: journal.id
     }));
 
-    let insertedCount = 0;
-    let duplicateCount = 0;
-    const batchSize = 100;
+    // Perform client-side de-duplication
+    const { unique: uniqueTrades, duplicates: duplicateTrades } = deduplicateTrades(tradesData);
+    
+    console.log(`🔄 De-duplication results:`);
+    console.log(`  - Original trades: ${tradesData.length}`);
+    console.log(`  - Unique trades: ${uniqueTrades.length}`);
+    console.log(`  - Duplicates found: ${duplicateTrades.length}`);
 
-    for (let i = 0; i < tradesData.length; i += batchSize) {
-      const batch = tradesData.slice(i, i + batchSize);
-      
-      try {
-        const { data: insertedTrades, error: batchError } = await supabase
-          .from('trades')
-          .insert(batch)
-          .select('id');
+    // Update summary with duplicate information
+    summary.duplicatesSkipped = duplicateTrades.length;
+    summary.duplicateEntries = duplicateTrades.map(trade => ({
+      datetime: trade.datetime,
+      symbol: trade.symbol || '',
+      side: trade.side || '',
+      qty: trade.qty || 0,
+      price: trade.price || 0,
+      pnl: trade.pnl || 0
+    }));
 
-        if (batchError) {
-          if (batchError.message.includes('duplicate') || batchError.message.includes('unique')) {
-            console.log(`⚠️ Batch insert failed due to duplicates, trying individual inserts...`);
-            
-            for (const trade of batch) {
-              try {
-                const { error: singleError } = await supabase.from('trades').insert(trade);
-                if (singleError) {
-                  if (singleError.message.includes('duplicate') || singleError.message.includes('unique')) {
-                    duplicateCount++;
-                    summary.duplicateEntries.push({
-                      datetime: trade.datetime,
-                      symbol: trade.symbol || '',
-                      side: trade.side || '',
-                      qty: trade.qty || 0,
-                      price: trade.price || 0,
-                      pnl: trade.pnl || 0
-                    });
-                  } else {
-                    throw singleError;
-                  }
-                } else {
-                  insertedCount++;
-                }
-              } catch (error) {
-                console.error('❌ Error inserting individual trade:', error);
-                throw error;
-              }
-            }
-          } else {
+    /* ------------ Insert unique trades ------------ */
+    setLoadingMessage(`Inserting ${uniqueTrades.length} unique trades...`);
+    
+    if (uniqueTrades.length === 0) {
+      console.log('⚠️ No unique trades to insert after de-duplication');
+      summary.newEntriesInserted = 0;
+    } else {
+      const batchSize = 100;
+      let insertedCount = 0;
+
+      for (let i = 0; i < uniqueTrades.length; i += batchSize) {
+        const batch = uniqueTrades.slice(i, i + batchSize);
+        
+        try {
+          const { data: insertedTrades, error: batchError } = await supabase
+            .from('trades')
+            .insert(batch)
+            .select('id');
+
+          if (batchError) {
+            console.error(`❌ Error inserting batch ${i}-${i + batchSize}:`, batchError);
             throw batchError;
           }
-        } else {
+
           insertedCount += insertedTrades?.length || 0;
+          console.log(`✅ Inserted batch ${i}-${i + batchSize}: ${insertedTrades?.length || 0} trades`);
+        } catch (error) {
+          console.error(`❌ Error inserting batch ${i}-${i + batchSize}:`, error);
+          throw error;
         }
-      } catch (error) {
-        console.error(`❌ Error inserting batch ${i}-${i + batchSize}:`, error);
-        throw error;
       }
+
+      summary.newEntriesInserted = insertedCount;
+      console.log(`📊 Successfully inserted ${insertedCount} unique trades`);
     }
-
-    summary.newEntriesInserted = insertedCount;
-    summary.duplicatesSkipped = duplicateCount;
-
-    console.log(`📊 Insert results: ${insertedCount} inserted, ${duplicateCount} duplicates skipped`);
 
     /* ------------ Generate AI insights (optional) ------------ */
     try {
       setLoadingMessage('Generating AI insights...');
       const { data: insights, error: insightsError } = await supabase.functions.invoke<
         Partial<Tables<'trade_sessions'>>
-      >('analyze-trades', { body: { trades: tradesData.slice(0, 100) } });
+      >('analyze-trades', { body: { trades: uniqueTrades.slice(0, 100) } });
       
       if (!insightsError && insights) {
         await supabase.from('trade_sessions').update(insights).eq('id', newSession.id);
