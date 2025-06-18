@@ -31,7 +31,7 @@ interface TradeAnalysisSummary {
   }>;
 }
 
-/** Enhanced robust float parser handling all broker negative value formats */
+/** Enhanced robust float parser handling all broker negative value formats and international number formats */
 const safeParseFloat = (value: unknown): number => {
   if (typeof value === 'number') return value;
   if (typeof value === 'string') {
@@ -76,16 +76,58 @@ const safeParseFloat = (value: unknown): number => {
       console.log(`⬅️ Found leading minus: "${value}" -> negative: ${cleanValue}`);
     }
 
-    // Remove currency symbols, commas, spaces
-    cleanValue = cleanValue.replace(/[$,%\s€£¥₹¢₨₩₪₫₡₦₨₱₽₪₴₸₼₿]+/g, '');
-    cleanValue = cleanValue.replace(/[^0-9.]/g, '');
+    // Remove currency symbols and spaces first, but keep numbers, commas, and periods
+    cleanValue = cleanValue.replace(/[$%\s€£¥₹¢₨₩₪₫₡₦₨₱₽₪₴₸₼₿]+/g, '');
     
-    // Handle multiple dots
-    const dotIndex = cleanValue.indexOf('.');
-    if (dotIndex !== -1) {
-      const beforeDot = cleanValue.substring(0, dotIndex);
-      const afterDot = cleanValue.substring(dotIndex + 1).replace(/\./g, '');
-      cleanValue = beforeDot + '.' + afterDot;
+    // Now handle international number formats intelligently
+    const commaCount = (cleanValue.match(/,/g) || []).length;
+    const periodCount = (cleanValue.match(/\./g) || []).length;
+    
+    if (commaCount === 0 && periodCount <= 1) {
+      // Simple case: no commas, at most one period (e.g., "123.45" or "123")
+      cleanValue = cleanValue.replace(/[^0-9.]/g, '');
+    } else if (commaCount > 0 && periodCount === 0) {
+      // Only commas present
+      const lastCommaIndex = cleanValue.lastIndexOf(',');
+      const afterLastComma = cleanValue.substring(lastCommaIndex + 1);
+      
+      if (afterLastComma.length <= 3 && /^\d+$/.test(afterLastComma)) {
+        // Likely decimal separator (e.g., "123,45" or "1234,56")
+        cleanValue = cleanValue.replace(',', '.').replace(/[^0-9.]/g, '');
+        console.log(`🌍 Detected comma as decimal separator: "${value}" -> "${cleanValue}"`);
+      } else {
+        // Likely thousands separators (e.g., "1,234,567")
+        cleanValue = cleanValue.replace(/,/g, '').replace(/[^0-9]/g, '');
+        console.log(`🌍 Detected commas as thousands separators: "${value}" -> "${cleanValue}"`);
+      }
+    } else if (commaCount > 0 && periodCount > 0) {
+      // Both commas and periods present
+      const lastCommaIndex = cleanValue.lastIndexOf(',');
+      const lastPeriodIndex = cleanValue.lastIndexOf('.');
+      
+      if (lastCommaIndex > lastPeriodIndex) {
+        // Comma comes after period, comma is decimal separator (e.g., "1.234,56")
+        const beforeDecimal = cleanValue.substring(0, lastCommaIndex).replace(/[^0-9]/g, '');
+        const afterDecimal = cleanValue.substring(lastCommaIndex + 1).replace(/[^0-9]/g, '');
+        cleanValue = beforeDecimal + '.' + afterDecimal;
+        console.log(`🌍 Detected European format (period=thousands, comma=decimal): "${value}" -> "${cleanValue}"`);
+      } else {
+        // Period comes after comma, period is decimal separator (e.g., "1,234.56")
+        const beforeDecimal = cleanValue.substring(0, lastPeriodIndex).replace(/[^0-9]/g, '');
+        const afterDecimal = cleanValue.substring(lastPeriodIndex + 1).replace(/[^0-9]/g, '');
+        cleanValue = beforeDecimal + '.' + afterDecimal;
+        console.log(`🌍 Detected US format (comma=thousands, period=decimal): "${value}" -> "${cleanValue}"`);
+      }
+    } else {
+      // Multiple periods, no commas - remove all but last period
+      const lastPeriodIndex = cleanValue.lastIndexOf('.');
+      if (lastPeriodIndex !== -1) {
+        const beforeDot = cleanValue.substring(0, lastPeriodIndex).replace(/[^0-9]/g, '');
+        const afterDot = cleanValue.substring(lastPeriodIndex + 1).replace(/[^0-9]/g, '');
+        cleanValue = beforeDot + '.' + afterDot;
+      } else {
+        cleanValue = cleanValue.replace(/[^0-9]/g, '');
+      }
     }
 
     if (cleanValue === '.' || cleanValue === '') {
