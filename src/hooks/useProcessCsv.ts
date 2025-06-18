@@ -5,6 +5,7 @@ import { toast } from '@/hooks/use-toast';
 import { Tables, TablesInsert } from '@/integrations/supabase/types';
 import { useAuth } from '@/components/AuthProvider';
 import { calculateMetrics } from '@/lib/trade-metrics';
+import { parseNumber, inferSide, normalizeSymbol, parseTags, validateDateTime } from '@/utils/normalise';
 
 type Trade = Tables<'trades'>;
 type Journal = Tables<'journals'>;
@@ -31,122 +32,6 @@ interface TradeAnalysisSummary {
   }>;
 }
 
-/** Enhanced robust float parser handling all broker negative value formats and international number formats */
-const safeParseFloat = (value: unknown): number => {
-  if (typeof value === 'number') return value;
-  if (typeof value === 'string') {
-    let cleanValue = value.trim();
-    
-    if (!cleanValue || cleanValue === '' || cleanValue === 'null' || cleanValue === 'undefined') {
-      return 0;
-    }
-
-    console.log(`🔍 Parsing value: "${value}" -> cleaned: "${cleanValue}"`);
-
-    let isNegative = false;
-
-    // Handle parentheses formats: (500), ($500), (500.00), etc.
-    const parenthesesPatterns = [
-      /^\s*\(\s*\$?([0-9,.-]+)\s*\)\s*$/,
-      /^\s*\(\s*([0-9,.-]+)\s*\)\s*$/,
-      /^\s*\$\s*\(\s*([0-9,.-]+)\s*\)\s*$/,
-    ];
-
-    for (const pattern of parenthesesPatterns) {
-      const match = cleanValue.match(pattern);
-      if (match) {
-        isNegative = true;
-        cleanValue = match[1];
-        console.log(`💰 Found parentheses format: "${value}" -> negative: ${cleanValue}`);
-        break;
-      }
-    }
-
-    // Check for trailing minus: 500-, $500-, 500.00-
-    if (!isNegative && cleanValue.match(/.*-\s*$/)) {
-      isNegative = true;
-      cleanValue = cleanValue.replace(/-\s*$/, '');
-      console.log(`➖ Found trailing minus: "${value}" -> negative: ${cleanValue}`);
-    }
-
-    // Check for leading minus
-    if (!isNegative && cleanValue.startsWith('-')) {
-      isNegative = true;
-      cleanValue = cleanValue.slice(1);
-      console.log(`⬅️ Found leading minus: "${value}" -> negative: ${cleanValue}`);
-    }
-
-    // Remove currency symbols and spaces first, but keep numbers, commas, and periods
-    cleanValue = cleanValue.replace(/[$%\s€£¥₹¢₨₩₪₫₡₦₨₱₽₪₴₸₼₿]+/g, '');
-    
-    // Now handle international number formats intelligently
-    const commaCount = (cleanValue.match(/,/g) || []).length;
-    const periodCount = (cleanValue.match(/\./g) || []).length;
-    
-    if (commaCount === 0 && periodCount <= 1) {
-      // Simple case: no commas, at most one period (e.g., "123.45" or "123")
-      cleanValue = cleanValue.replace(/[^0-9.]/g, '');
-    } else if (commaCount > 0 && periodCount === 0) {
-      // Only commas present
-      const lastCommaIndex = cleanValue.lastIndexOf(',');
-      const afterLastComma = cleanValue.substring(lastCommaIndex + 1);
-      
-      if (afterLastComma.length <= 3 && /^\d+$/.test(afterLastComma)) {
-        // Likely decimal separator (e.g., "123,45" or "1234,56")
-        cleanValue = cleanValue.replace(',', '.').replace(/[^0-9.]/g, '');
-        console.log(`🌍 Detected comma as decimal separator: "${value}" -> "${cleanValue}"`);
-      } else {
-        // Likely thousands separators (e.g., "1,234,567")
-        cleanValue = cleanValue.replace(/,/g, '').replace(/[^0-9]/g, '');
-        console.log(`🌍 Detected commas as thousands separators: "${value}" -> "${cleanValue}"`);
-      }
-    } else if (commaCount > 0 && periodCount > 0) {
-      // Both commas and periods present
-      const lastCommaIndex = cleanValue.lastIndexOf(',');
-      const lastPeriodIndex = cleanValue.lastIndexOf('.');
-      
-      if (lastCommaIndex > lastPeriodIndex) {
-        // Comma comes after period, comma is decimal separator (e.g., "1.234,56")
-        const beforeDecimal = cleanValue.substring(0, lastCommaIndex).replace(/[^0-9]/g, '');
-        const afterDecimal = cleanValue.substring(lastCommaIndex + 1).replace(/[^0-9]/g, '');
-        cleanValue = beforeDecimal + '.' + afterDecimal;
-        console.log(`🌍 Detected European format (period=thousands, comma=decimal): "${value}" -> "${cleanValue}"`);
-      } else {
-        // Period comes after comma, period is decimal separator (e.g., "1,234.56")
-        const beforeDecimal = cleanValue.substring(0, lastPeriodIndex).replace(/[^0-9]/g, '');
-        const afterDecimal = cleanValue.substring(lastPeriodIndex + 1).replace(/[^0-9]/g, '');
-        cleanValue = beforeDecimal + '.' + afterDecimal;
-        console.log(`🌍 Detected US format (comma=thousands, period=decimal): "${value}" -> "${cleanValue}"`);
-      }
-    } else {
-      // Multiple periods, no commas - remove all but last period
-      const lastPeriodIndex = cleanValue.lastIndexOf('.');
-      if (lastPeriodIndex !== -1) {
-        const beforeDot = cleanValue.substring(0, lastPeriodIndex).replace(/[^0-9]/g, '');
-        const afterDot = cleanValue.substring(lastPeriodIndex + 1).replace(/[^0-9]/g, '');
-        cleanValue = beforeDot + '.' + afterDot;
-      } else {
-        cleanValue = cleanValue.replace(/[^0-9]/g, '');
-      }
-    }
-
-    if (cleanValue === '.' || cleanValue === '') {
-      return 0;
-    }
-
-    const parsed = parseFloat(cleanValue);
-    const result = isNaN(parsed) ? 0 : parsed;
-    const finalValue = isNegative ? -Math.abs(result) : result;
-    
-    if (isNegative || Math.abs(result) > 0) {
-      console.log(`✅ Final parsed value: "${value}" -> ${finalValue} (negative: ${isNegative})`);
-    }
-    
-    return finalValue;
-  }
-  return 0;
-};
-
 /** Check if data appears to be mock/demo data */
 const isMockData = (trade: any): boolean => {
   const mockSymbols = ['AAPL', 'TSLA', 'GOOG', 'GOOGL', 'META', 'NVDA', 'AMZN', 'MSFT', 'DEMO', 'TEST', 'SAMPLE'];
@@ -158,42 +43,37 @@ const isMockData = (trade: any): boolean => {
   return false;
 };
 
-/** Validate trade data */
-const validateTradeData = (trade: any): { isValid: boolean; errors: string[] } => {
+/** Validate trade data with detailed error reporting */
+const validateTradeData = (trade: any, rowIndex: number): { isValid: boolean; errors: string[] } => {
   const errors: string[] = [];
   
   if (!trade.datetime) {
-    errors.push('Missing datetime');
+    errors.push(`Row ${rowIndex}: Missing datetime`);
   } else {
-    const date = new Date(trade.datetime);
-    if (isNaN(date.getTime())) {
-      errors.push('Invalid datetime format');
-    } else if (date > new Date()) {
-      errors.push('Datetime is in the future');
-    } else if (date < new Date('2000-01-01')) {
-      errors.push('Datetime is too far in the past');
+    const date = validateDateTime(trade.datetime);
+    if (!date) {
+      errors.push(`Row ${rowIndex}: Invalid datetime format`);
     }
   }
   
   if (!trade.symbol || trade.symbol.toString().trim().length === 0) {
-    errors.push('Missing or empty symbol');
+    errors.push(`Row ${rowIndex}: Missing or empty symbol`);
   }
   
-  // The side should already be normalized to 'BUY' or 'SELL' by processCSVData
-  if (!trade.side || !['BUY', 'SELL'].includes(trade.side.toString())) {
-    errors.push('Invalid or missing side');
+  if (!trade.side || !['BUY', 'SELL'].includes(trade.side)) {
+    errors.push(`Row ${rowIndex}: Invalid or missing side (must be BUY or SELL)`);
   }
   
-  if (!trade.qty || safeParseFloat(trade.qty) <= 0) {
-    errors.push('Invalid quantity (must be positive)');
+  if (!trade.qty || isNaN(trade.qty) || Math.abs(trade.qty) <= 0) {
+    errors.push(`Row ${rowIndex}: Invalid quantity (must be positive number)`);
   }
   
-  if (!trade.price || safeParseFloat(trade.price) <= 0) {
-    errors.push('Invalid price (must be positive)');
+  if (!trade.price || isNaN(trade.price) || trade.price <= 0) {
+    errors.push(`Row ${rowIndex}: Invalid price (must be positive number)`);
   }
   
-  if (trade.pnl === undefined || trade.pnl === null) {
-    errors.push('Missing P&L value');
+  if (trade.pnl === undefined || trade.pnl === null || isNaN(trade.pnl)) {
+    errors.push(`Row ${rowIndex}: Missing or invalid P&L value`);
   }
   
   return { isValid: errors.length === 0, errors };
@@ -214,7 +94,7 @@ export const useProcessCsv = (journal: Journal) => {
     }
 
     const uploadTimestamp = new Date().toISOString();
-    console.log(`🚀 Starting CSV processing for file: ${file.name}`);
+    console.log(`🚀 Starting broker-agnostic CSV processing for file: ${file.name}`);
 
     setLoadingMessage('Reading CSV file...');
     
@@ -300,7 +180,7 @@ export const useProcessCsv = (journal: Journal) => {
       return header ? row[header] : undefined;
     };
 
-    /* ------------ Parse and validate trades ------------ */
+    /* ------------ Parse and validate trades with broker-agnostic normalization ------------ */
     setLoadingMessage('Processing trade data...');
     const summary: TradeAnalysisSummary = {
       totalRows: results.data.length,
@@ -314,99 +194,141 @@ export const useProcessCsv = (journal: Journal) => {
     };
 
     const validTrades: Array<Omit<TablesInsert<'trades'>, 'user_id' | 'journal_id' | 'session_id'>> = [];
-    const parseErrors: string[] = [];
+    const allParseErrors: string[] = [];
 
-    console.log(`🔄 Processing ${results.data.length} CSV rows...`);
+    console.log(`🔄 Processing ${results.data.length} CSV rows with broker-agnostic normalization...`);
 
     for (let index = 0; index < results.data.length; index++) {
       const row = results.data[index];
+      const rowIndex = index + 1;
       
       try {
-        const datetimeVal = getVal(row, 'datetime') || row.Timestamp || row.Time || row.Date;
-        const rawPnlValue = getVal(row, 'pnl') || row.PnL || row['P/L'] || row.NetPL || row.Profit || row.Loss || row.profit_loss;
+        // Extract raw values using the mapping
+        const datetimeRaw = getVal(row, 'datetime') || row.Timestamp || row.Time || row.Date;
+        const symbolRaw = getVal(row, 'symbol') || row.Symbol || row.Instrument;
+        const sideRaw = getVal(row, 'side') || row.Side || row.Action || row.Type || row.Direction;
+        const qtyRaw = getVal(row, 'qty') || row.Qty || row.Quantity || row.Size;
+        const priceRaw = getVal(row, 'price') || row.Price || row.EntryPrice || row.ExitPrice;
+        const buyPriceRaw = getVal(row, 'buyPrice') || row.BuyPrice || row.EntryPrice;
+        const sellPriceRaw = getVal(row, 'sellPrice') || row.SellPrice || row.ExitPrice;
+        const pnlRaw = getVal(row, 'pnl') || row.PnL || row['P/L'] || row.NetPL || row.Profit || row.Loss || row.profit_loss;
+        const notesRaw = getVal(row, 'notes') || row.Notes || row.Comment || '';
+        const strategyRaw = getVal(row, 'strategy') || row.Strategy || '';
+        const tagsRaw = getVal(row, 'tags') || row.Tags || '';
 
-        if (!datetimeVal) {
-          parseErrors.push(`Row ${index + 1}: Missing datetime`);
+        console.log(`📊 Row ${rowIndex} raw values:`, {
+          datetime: datetimeRaw,
+          symbol: symbolRaw,
+          side: sideRaw,
+          qty: qtyRaw,
+          price: priceRaw,
+          buyPrice: buyPriceRaw,
+          sellPrice: sellPriceRaw,
+          pnl: pnlRaw
+        });
+
+        // Validate and parse datetime
+        const datetime = validateDateTime(datetimeRaw as string);
+        if (!datetime) {
+          allParseErrors.push(`Row ${rowIndex}: Invalid or missing datetime`);
           continue;
         }
-        
-        // --- START OF MODIFICATION ---
-        const rawSide = (getVal(row, 'side') || row.Side || row.Action || row.Type)?.toString().trim().toUpperCase();
-        let normalizedSide: 'BUY' | 'SELL' | null = null;
-        if (rawSide) {
-          if (['BUY', 'LONG', 'L', 'B'].includes(rawSide)) {
-            normalizedSide = 'BUY';
-          } else if (['SELL', 'SHORT', 'S', 'SH'].includes(rawSide)) {
-            normalizedSide = 'SELL';
-          }
-        }
-        // --- END OF MODIFICATION ---
 
+        // Normalize symbol
+        const symbol = normalizeSymbol(symbolRaw as string);
+        if (!symbol) {
+          allParseErrors.push(`Row ${rowIndex}: Invalid or missing symbol`);
+          continue;
+        }
+
+        // Parse numeric values using broker-agnostic parser
+        const qty = parseNumber(qtyRaw);
+        const price = parseNumber(priceRaw);
+        const buyPrice = parseNumber(buyPriceRaw);
+        const sellPrice = parseNumber(sellPriceRaw);
+        const pnl = parseNumber(pnlRaw);
+
+        console.log(`📊 Row ${rowIndex} parsed values:`, {
+          symbol,
+          qty,
+          price,
+          buyPrice,
+          sellPrice,
+          pnl
+        });
+
+        // Determine the best price to use
+        let finalPrice = price;
+        if (isNaN(finalPrice) && !isNaN(buyPrice)) finalPrice = buyPrice;
+        if (isNaN(finalPrice) && !isNaN(sellPrice)) finalPrice = sellPrice;
+
+        // Infer side using broker-agnostic logic
+        const side = inferSide(
+          sideRaw as string,
+          qty,
+          !isNaN(buyPrice) ? buyPrice : undefined,
+          !isNaN(sellPrice) ? sellPrice : undefined
+        );
+
+        // Build trade object
         const trade = {
-          datetime: new Date(datetimeVal as string).toISOString(),
-          symbol: (getVal(row, 'symbol') || row.Symbol || row.Instrument)?.toString().trim().toUpperCase() || null,
-          side: normalizedSide, // Use the normalized value here
-          qty: safeParseFloat(getVal(row, 'qty') || row.Qty || row.Quantity || row.Size),
-          price: safeParseFloat(getVal(row, 'price') || row.Price || row.EntryPrice || row.ExitPrice),
-          pnl: safeParseFloat(rawPnlValue),
-          notes: ((getVal(row, 'notes') || row.Notes || row.Comment || '') as string).trim() || null,
-          strategy: ((getVal(row, 'strategy') || row.Strategy || '') as string).trim() || null,
-          tags: null,
+          datetime: datetime.toISOString(),
+          symbol,
+          side,
+          qty: Math.abs(qty), // Always store positive quantity
+          price: finalPrice,
+          pnl,
+          notes: notesRaw ? notesRaw.toString().trim() : null,
+          strategy: strategyRaw ? strategyRaw.toString().trim() : null,
+          tags: parseTags(tagsRaw as string),
           image_url: null
         };
 
-        console.log(`📊 Row ${index + 1} parsed:`, {
-          symbol: trade.symbol,
-          side: trade.side,
-          qty: trade.qty,
-          price: trade.price,
-          pnl: trade.pnl,
-          rawPnl: rawPnlValue
-        });
+        console.log(`📊 Row ${rowIndex} final trade:`, trade);
 
-        // Validate trade data
-        const validation = validateTradeData(trade);
+        // Validate the normalized trade
+        const validation = validateTradeData(trade, rowIndex);
         if (!validation.isValid) {
-          parseErrors.push(`Row ${index + 1}: ${validation.errors.join(', ')}`);
+          allParseErrors.push(...validation.errors);
           continue;
         }
 
         // Skip mock data
         if (isMockData(trade)) {
-          console.warn(`⚠️ Row ${index + 1}: Detected mock data, skipping`);
+          console.warn(`⚠️ Row ${rowIndex}: Detected mock data, skipping`);
           continue;
         }
 
         validTrades.push(trade);
       } catch (error) {
-        console.error(`❌ Error parsing row ${index + 1}:`, error);
-        parseErrors.push(`Row ${index + 1}: ${(error as Error).message}`);
+        console.error(`❌ Error parsing row ${rowIndex}:`, error);
+        allParseErrors.push(`Row ${rowIndex}: ${(error as Error).message}`);
       }
     }
 
     summary.validTrades = validTrades.length;
-    summary.parseErrors = parseErrors.length;
+    summary.parseErrors = allParseErrors.length;
 
-    console.log(`📊 Processing summary:`);
+    console.log(`📊 Broker-agnostic processing summary:`);
     console.log(`  - Valid trades: ${summary.validTrades}`);
     console.log(`  - Parse errors: ${summary.parseErrors}`);
     
-    if (parseErrors.length > 0) {
-      console.log(`❌ Parse errors:`, parseErrors.slice(0, 10)); // Log first 10 errors
+    if (allParseErrors.length > 0) {
+      console.log(`❌ Parse errors:`, allParseErrors.slice(0, 10));
     }
 
     if (validTrades.length === 0) {
       // Enhanced error message with specific parsing errors
-      const firstTenErrors = parseErrors.slice(0, 10);
+      const firstTenErrors = allParseErrors.slice(0, 10);
       const errorDetails = firstTenErrors.length > 0 
         ? `\n\nSpecific errors found:\n${firstTenErrors.join('\n')}`
         : '';
       
-      const additionalErrors = parseErrors.length > 10 
-        ? `\n\n... and ${parseErrors.length - 10} more errors.`
+      const additionalErrors = allParseErrors.length > 10 
+        ? `\n\n... and ${allParseErrors.length - 10} more errors.`
         : '';
 
-      throw new Error(`No valid trades found. Found ${parseErrors.length} parsing errors.${errorDetails}${additionalErrors}\n\nPlease check your CSV format and ensure it contains valid trading data with required columns (datetime, symbol, side, quantity, price, P&L).`);
+      throw new Error(`No valid trades found. Found ${allParseErrors.length} parsing errors.${errorDetails}${additionalErrors}\n\nPlease check your CSV format and ensure it contains valid trading data with required columns (datetime, symbol, side, quantity, price, P&L).`);
     }
 
     /* ------------ Clean up existing mock data ------------ */
@@ -459,7 +381,6 @@ export const useProcessCsv = (journal: Journal) => {
     /* ------------ Insert trades with proper transaction handling ------------ */
     setLoadingMessage(`Inserting ${validTrades.length} trades...`);
     
-    // Use a single transaction for all inserts
     const tradesData = validTrades.map((t) => ({
       ...t,
       session_id: newSession.id,
@@ -469,7 +390,7 @@ export const useProcessCsv = (journal: Journal) => {
 
     let insertedCount = 0;
     let duplicateCount = 0;
-    const batchSize = 100; // Process in batches for better performance
+    const batchSize = 100;
 
     for (let i = 0; i < tradesData.length; i += batchSize) {
       const batch = tradesData.slice(i, i + batchSize);
@@ -481,7 +402,6 @@ export const useProcessCsv = (journal: Journal) => {
           .select('id');
 
         if (batchError) {
-          // If batch insert fails due to duplicates, try individual inserts
           if (batchError.message.includes('duplicate') || batchError.message.includes('unique')) {
             console.log(`⚠️ Batch insert failed due to duplicates, trying individual inserts...`);
             
@@ -543,8 +463,8 @@ export const useProcessCsv = (journal: Journal) => {
 
     /* ------------ Show success notification ------------ */
     const successMessage = summary.duplicatesSkipped > 0
-      ? `Successfully inserted ${summary.newEntriesInserted} new trades. ${summary.duplicatesSkipped} duplicates were skipped.`
-      : `Successfully inserted ${summary.newEntriesInserted} trades.`;
+      ? `Successfully processed ${summary.newEntriesInserted} new trades. ${summary.duplicatesSkipped} duplicates were skipped.`
+      : `Successfully processed ${summary.newEntriesInserted} trades.`;
 
     toast({
       title: 'Upload Complete!',
