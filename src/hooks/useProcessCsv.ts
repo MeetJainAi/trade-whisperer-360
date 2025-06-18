@@ -439,7 +439,7 @@ export const useProcessCsv = (journal: Journal) => {
       pnl: trade.pnl || 0
     }));
 
-    /* ------------ Insert unique trades using upsert to handle database duplicates ------------ */
+    /* ------------ Insert unique trades with proper duplicate handling ------------ */
     setLoadingMessage(`Inserting ${uniqueTrades.length} unique trades...`);
     
     if (uniqueTrades.length === 0) {
@@ -454,29 +454,28 @@ export const useProcessCsv = (journal: Journal) => {
         const batch = uniqueTrades.slice(i, i + batchSize);
         
         try {
-          // Use upsert with ignoreDuplicates to handle existing trades in the database
-          const { count, error: batchError } = await supabase
+          // Use regular insert and handle duplicate key errors gracefully
+          const { data: insertedData, error: batchError } = await supabase
             .from('trades')
-            .upsert(batch, {
-              onConflict: 'journal_id,datetime,symbol,side,qty,price,pnl',
-              ignoreDuplicates: true
-            })
-            .select('id', { count: 'exact' });
+            .insert(batch)
+            .select('id');
 
           if (batchError) {
-            console.error(`❌ Error upserting batch ${i}-${i + batchSize}:`, batchError);
-            throw batchError;
+            // Check if it's a duplicate key error (constraint violation)
+            if (batchError.code === '23505') {
+              console.log(`🔄 Batch ${i}-${i + batchSize}: Detected duplicate key constraint violation, skipping duplicates`);
+              totalSkippedCount += batch.length;
+            } else {
+              console.error(`❌ Error inserting batch ${i}-${i + batchSize}:`, batchError);
+              throw batchError;
+            }
+          } else {
+            const insertedCount = insertedData?.length || 0;
+            totalInsertedCount += insertedCount;
+            console.log(`✅ Processed batch ${i}-${i + batchSize}: ${insertedCount} new trades inserted`);
           }
-
-          const insertedCount = count || 0;
-          const skippedCount = batch.length - insertedCount;
-          
-          totalInsertedCount += insertedCount;
-          totalSkippedCount += skippedCount;
-
-          console.log(`✅ Processed batch ${i}-${i + batchSize}: ${insertedCount} new trades inserted, ${skippedCount} duplicates skipped`);
         } catch (error) {
-          console.error(`❌ Error upserting batch ${i}-${i + batchSize}:`, error);
+          console.error(`❌ Error inserting batch ${i}-${i + batchSize}:`, error);
           throw error;
         }
       }
