@@ -179,7 +179,8 @@ const validateTradeData = (trade: any): { isValid: boolean; errors: string[] } =
     errors.push('Missing or empty symbol');
   }
   
-  if (!trade.side || !['BUY', 'SELL', 'LONG', 'SHORT', 'buy', 'sell', 'long', 'short'].includes(trade.side.toString().toUpperCase())) {
+  // The side should already be normalized to 'BUY' or 'SELL' by processCSVData
+  if (!trade.side || !['BUY', 'SELL'].includes(trade.side.toString())) {
     errors.push('Invalid or missing side');
   }
   
@@ -328,11 +329,23 @@ export const useProcessCsv = (journal: Journal) => {
           parseErrors.push(`Row ${index + 1}: Missing datetime`);
           continue;
         }
+        
+        // --- START OF MODIFICATION ---
+        const rawSide = (getVal(row, 'side') || row.Side || row.Action || row.Type)?.toString().trim().toUpperCase();
+        let normalizedSide: 'BUY' | 'SELL' | null = null;
+        if (rawSide) {
+          if (['BUY', 'LONG', 'L', 'B'].includes(rawSide)) {
+            normalizedSide = 'BUY';
+          } else if (['SELL', 'SHORT', 'S', 'SH'].includes(rawSide)) {
+            normalizedSide = 'SELL';
+          }
+        }
+        // --- END OF MODIFICATION ---
 
         const trade = {
           datetime: new Date(datetimeVal as string).toISOString(),
           symbol: (getVal(row, 'symbol') || row.Symbol || row.Instrument)?.toString().trim().toUpperCase() || null,
-          side: (getVal(row, 'side') || row.Side || row.Action || row.Type)?.toString().trim().toUpperCase() || null,
+          side: normalizedSide, // Use the normalized value here
           qty: safeParseFloat(getVal(row, 'qty') || row.Qty || row.Quantity || row.Size),
           price: safeParseFloat(getVal(row, 'price') || row.Price || row.EntryPrice || row.ExitPrice),
           pnl: safeParseFloat(rawPnlValue),
