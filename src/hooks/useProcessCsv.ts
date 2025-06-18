@@ -383,7 +383,17 @@ export const useProcessCsv = (journal: Journal) => {
     }
 
     if (validTrades.length === 0) {
-      throw new Error(`No valid trades found. Found ${parseErrors.length} parsing errors. Please check your CSV format.`);
+      // Enhanced error message with specific parsing errors
+      const firstTenErrors = parseErrors.slice(0, 10);
+      const errorDetails = firstTenErrors.length > 0 
+        ? `\n\nSpecific errors found:\n${firstTenErrors.join('\n')}`
+        : '';
+      
+      const additionalErrors = parseErrors.length > 10 
+        ? `\n\n... and ${parseErrors.length - 10} more errors.`
+        : '';
+
+      throw new Error(`No valid trades found. Found ${parseErrors.length} parsing errors.${errorDetails}${additionalErrors}\n\nPlease check your CSV format and ensure it contains valid trading data with required columns (datetime, symbol, side, quantity, price, P&L).`);
     }
 
     /* ------------ Clean up existing mock data ------------ */
