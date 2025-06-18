@@ -1,5 +1,5 @@
 
 ALTER TABLE public.trade_sessions
-ADD COLUMN profit_factor REAL,
-ADD COLUMN trades_by_day JSONB,
-ADD COLUMN trades_by_symbol JSONB;
+ADD COLUMN IF NOT EXISTS  profit_factor REAL,
+ADD COLUMN IF NOT EXISTS  trades_by_day JSONB,
+ADD COLUMN IF NOT EXISTS  trades_by_symbol JSONB;
