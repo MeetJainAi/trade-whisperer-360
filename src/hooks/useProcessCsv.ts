@@ -439,7 +439,7 @@ export const useProcessCsv = (journal: Journal) => {
       pnl: trade.pnl || 0
     }));
 
-    /* ------------ Insert unique trades ------------ */
+    /* ------------ Insert unique trades using upsert to handle database duplicates ------------ */
     setLoadingMessage(`Inserting ${uniqueTrades.length} unique trades...`);
     
     if (uniqueTrades.length === 0) {
@@ -447,32 +447,45 @@ export const useProcessCsv = (journal: Journal) => {
       summary.newEntriesInserted = 0;
     } else {
       const batchSize = 100;
-      let insertedCount = 0;
+      let totalInsertedCount = 0;
+      let totalSkippedCount = 0;
 
       for (let i = 0; i < uniqueTrades.length; i += batchSize) {
         const batch = uniqueTrades.slice(i, i + batchSize);
         
         try {
-          const { data: insertedTrades, error: batchError } = await supabase
+          // Use upsert with ignoreDuplicates to handle existing trades in the database
+          const { count, error: batchError } = await supabase
             .from('trades')
-            .insert(batch)
-            .select('id');
+            .upsert(batch, {
+              onConflict: 'journal_id,datetime,symbol,side,qty,price,pnl',
+              ignoreDuplicates: true
+            })
+            .select('id', { count: 'exact' });
 
           if (batchError) {
-            console.error(`❌ Error inserting batch ${i}-${i + batchSize}:`, batchError);
+            console.error(`❌ Error upserting batch ${i}-${i + batchSize}:`, batchError);
             throw batchError;
           }
 
-          insertedCount += insertedTrades?.length || 0;
-          console.log(`✅ Inserted batch ${i}-${i + batchSize}: ${insertedTrades?.length || 0} trades`);
+          const insertedCount = count || 0;
+          const skippedCount = batch.length - insertedCount;
+          
+          totalInsertedCount += insertedCount;
+          totalSkippedCount += skippedCount;
+
+          console.log(`✅ Processed batch ${i}-${i + batchSize}: ${insertedCount} new trades inserted, ${skippedCount} duplicates skipped`);
         } catch (error) {
-          console.error(`❌ Error inserting batch ${i}-${i + batchSize}:`, error);
+          console.error(`❌ Error upserting batch ${i}-${i + batchSize}:`, error);
           throw error;
         }
       }
 
-      summary.newEntriesInserted = insertedCount;
-      console.log(`📊 Successfully inserted ${insertedCount} unique trades`);
+      summary.newEntriesInserted = totalInsertedCount;
+      summary.duplicatesSkipped += totalSkippedCount; // Add database duplicates to the file duplicates
+
+      console.log(`📊 Successfully inserted ${totalInsertedCount} new trades`);
+      console.log(`📊 Total duplicates skipped: ${summary.duplicatesSkipped} (${duplicateTrades.length} from file + ${totalSkippedCount} from database)`);
     }
 
     /* ------------ Generate AI insights (optional) ------------ */
