@@ -13,11 +13,12 @@ import { format } from 'date-fns';
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { ListFilter, SortAsc, SortDesc, Edit, FileText, MoreHorizontal, Save, X } from "lucide-react";
+import { ListFilter, SortAsc, SortDesc, Edit, FileText, MoreHorizontal, Save, X, Trash2 } from "lucide-react";
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from '@/components/ui/use-toast';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 
 interface TradesLogTableProps {
   trades: Tables<'trades'>[];
@@ -40,23 +41,49 @@ const TradesLogTable = ({ trades }: TradesLogTableProps) => {
 
   const [editingTrade, setEditingTrade] = useState<string | null>(null);
   const [editFormData, setEditFormData] = useState<Partial<Tables<'trades'>>>({});
+  const [tradeToDelete, setTradeToDelete] = useState<string | null>(null);
 
   const updateTradeMutation = useMutation({
     mutationFn: async ({ tradeId, updates }: { tradeId: string; updates: Partial<Tables<'trades'>> }) => {
+      console.log('Updating trade:', tradeId, updates);
       const { data, error } = await supabase
         .from('trades')
         .update(updates)
         .eq('id', tradeId)
         .select()
         .single();
-      if (error) throw error;
+      if (error) {
+        console.error('Update error:', error);
+        throw error;
+      }
       return data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['journalWithSessions'] });
+      queryClient.invalidateQueries({ queryKey: ['session'] });
       toast({ title: "Success", description: "Trade updated successfully." });
       setEditingTrade(null);
       setEditFormData({});
+    },
+    onError: (error: any) => {
+      console.error('Mutation error:', error);
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const deleteTradeMutation = useMutation({
+    mutationFn: async (tradeId: string) => {
+      const { error } = await supabase
+        .from('trades')
+        .delete()
+        .eq('id', tradeId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['journalWithSessions'] });
+      queryClient.invalidateQueries({ queryKey: ['session'] });
+      toast({ title: "Success", description: "Trade deleted successfully." });
+      setTradeToDelete(null);
     },
     onError: (error: any) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -76,6 +103,7 @@ const TradesLogTable = ({ trades }: TradesLogTableProps) => {
   };
 
   const handleEditTrade = (trade: Tables<'trades'>) => {
+    console.log('Editing trade:', trade);
     setEditingTrade(trade.id);
     setEditFormData({
       symbol: trade.symbol,
@@ -91,7 +119,17 @@ const TradesLogTable = ({ trades }: TradesLogTableProps) => {
 
   const handleSaveEdit = () => {
     if (!editingTrade) return;
-    updateTradeMutation.mutate({ tradeId: editingTrade, updates: editFormData });
+    console.log('Saving edit:', editingTrade, editFormData);
+    
+    // Clean up the data before sending
+    const cleanedData = {
+      ...editFormData,
+      qty: editFormData.qty ? Number(editFormData.qty) : undefined,
+      price: editFormData.price ? Number(editFormData.price) : undefined,
+      pnl: editFormData.pnl ? Number(editFormData.pnl) : undefined,
+    };
+    
+    updateTradeMutation.mutate({ tradeId: editingTrade, updates: cleanedData });
   };
 
   const handleCancelEdit = () => {
@@ -101,6 +139,10 @@ const TradesLogTable = ({ trades }: TradesLogTableProps) => {
 
   const handleViewNotes = (tradeId: string) => {
     navigate(`/trade-notes/${tradeId}`);
+  };
+
+  const handleDeleteTrade = (tradeId: string) => {
+    deleteTradeMutation.mutate(tradeId);
   };
 
   const sortedAndFilteredTrades = useMemo(() => {
@@ -194,7 +236,7 @@ const TradesLogTable = ({ trades }: TradesLogTableProps) => {
         <TableBody>
           {sortedAndFilteredTrades.map((trade) => (
             <TableRow key={trade.id}>
-              <TableCell>{format(new Date(trade.datetime), 'PPpp')}</TableCell>
+              <TableCell>{format(new Date(trade.datetime), 'MMM dd, HH:mm')}</TableCell>
               
               {/* Symbol - Editable */}
               <TableCell className="font-medium">
@@ -268,7 +310,7 @@ const TradesLogTable = ({ trades }: TradesLogTableProps) => {
                   />
                 ) : (
                   <span className={`font-medium ${trade.pnl && trade.pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {trade.pnl && trade.pnl >= 0 ? '+' : ''}{trade.pnl?.toFixed(2)}
+                    {trade.pnl && trade.pnl >= 0 ? '+' : ''}${trade.pnl?.toFixed(2)}
                   </span>
                 )}
               </TableCell>
@@ -283,19 +325,19 @@ const TradesLogTable = ({ trades }: TradesLogTableProps) => {
                     placeholder="Strategy"
                   />
                 ) : (
-                  (trade as any).strategy
+                  (trade as any).strategy || '-'
                 )}
               </TableCell>
               
               {/* Tags */}
-              <TableCell className="max-w-[200px]">
+              <TableCell className="max-w-[150px]">
                 {(trade as any).tags?.map((tag: string, index: number) => (
-                  <Badge key={`${trade.id}-${tag}-${index}`} variant="outline" className="mr-1 mb-1 font-normal">{tag}</Badge>
+                  <Badge key={`${trade.id}-${tag}-${index}`} variant="outline" className="mr-1 mb-1 font-normal text-xs">{tag}</Badge>
                 ))}
               </TableCell>
               
               {/* Quick Notes - Editable */}
-              <TableCell className="max-w-[250px]">
+              <TableCell className="max-w-[200px]">
                 {editingTrade === trade.id ? (
                   <Input
                     value={editFormData.notes || ''}
@@ -304,7 +346,7 @@ const TradesLogTable = ({ trades }: TradesLogTableProps) => {
                     placeholder="Quick notes..."
                   />
                 ) : (
-                  <span className="text-slate-600 truncate">
+                  <span className="text-slate-600 truncate text-sm">
                     {trade.notes || '-'}
                   </span>
                 )}
@@ -312,10 +354,12 @@ const TradesLogTable = ({ trades }: TradesLogTableProps) => {
               
               {/* Chart */}
               <TableCell>
-                {(trade as any).image_url && (
-                  <a href={(trade as any).image_url} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">
+                {(trade as any).image_url ? (
+                  <a href={(trade as any).image_url} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline text-sm">
                     View
                   </a>
+                ) : (
+                  <span className="text-slate-400 text-sm">-</span>
                 )}
               </TableCell>
               
@@ -346,6 +390,13 @@ const TradesLogTable = ({ trades }: TradesLogTableProps) => {
                         <FileText className="h-4 w-4 mr-2" />
                         Detailed Notes
                       </DropdownMenuItem>
+                      <DropdownMenuItem 
+                        onClick={() => setTradeToDelete(trade.id)}
+                        className="text-red-600 focus:text-red-600"
+                      >
+                        <Trash2 className="h-4 w-4 mr-2" />
+                        Delete Trade
+                      </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
                 )}
@@ -354,6 +405,28 @@ const TradesLogTable = ({ trades }: TradesLogTableProps) => {
           ))}
         </TableBody>
       </Table>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={!!tradeToDelete} onOpenChange={() => setTradeToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Trade</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this trade? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => tradeToDelete && handleDeleteTrade(tradeToDelete)}
+              className="bg-red-600 hover:bg-red-700"
+              disabled={deleteTradeMutation.isPending}
+            >
+              {deleteTradeMutation.isPending ? 'Deleting...' : 'Delete Trade'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

@@ -40,6 +40,9 @@ const isMockData = (trade: any): boolean => {
   if (mockSymbols.includes(symbol)) return true;
   if (symbol.includes('TEST') || symbol.includes('DEMO') || symbol.includes('SAMPLE')) return true;
   
+  // Check for obviously fake P&L patterns (like exactly $0.00 repeatedly)
+  if (trade.notes && trade.notes.includes('Mock trade')) return true;
+  
   return false;
 };
 
@@ -86,9 +89,9 @@ const createTradeUniqueKey = (trade: any): string => {
     trade.datetime,
     (trade.symbol || '').toString().toUpperCase().trim(),
     (trade.side || '').toString().toUpperCase().trim(),
-    trade.qty,
-    trade.price,
-    trade.pnl
+    Number(trade.qty || 0).toFixed(0),
+    Number(trade.price || 0).toFixed(4),
+    Number(trade.pnl || 0).toFixed(2)
   ].join('|');
 };
 
@@ -126,7 +129,7 @@ export const useProcessCsv = (journal: Journal) => {
     }
 
     const uploadTimestamp = new Date().toISOString();
-    console.log(`🚀 Starting broker-agnostic CSV processing for file: ${file.name}`);
+    console.log(`🚀 Starting CSV processing for file: ${file.name}`);
 
     setLoadingMessage('Reading CSV file...');
     
@@ -228,7 +231,7 @@ export const useProcessCsv = (journal: Journal) => {
     const validTrades: Array<Omit<TablesInsert<'trades'>, 'user_id' | 'journal_id' | 'session_id'>> = [];
     const allParseErrors: string[] = [];
 
-    console.log(`🔄 Processing ${results.data.length} CSV rows with broker-agnostic normalization...`);
+    console.log(`🔄 Processing ${results.data.length} CSV rows...`);
 
     for (let index = 0; index < results.data.length; index++) {
       const row = results.data[index];
@@ -247,17 +250,6 @@ export const useProcessCsv = (journal: Journal) => {
         const notesRaw = getVal(row, 'notes') || row.Notes || row.Comment || '';
         const strategyRaw = getVal(row, 'strategy') || row.Strategy || '';
         const tagsRaw = getVal(row, 'tags') || row.Tags || '';
-
-        console.log(`📊 Row ${rowIndex} raw values:`, {
-          datetime: datetimeRaw,
-          symbol: symbolRaw,
-          side: sideRaw,
-          qty: qtyRaw,
-          price: priceRaw,
-          buyPrice: buyPriceRaw,
-          sellPrice: sellPriceRaw,
-          pnl: pnlRaw
-        });
 
         // Validate and parse datetime
         const datetime = validateDateTime(datetimeRaw as string);
@@ -279,15 +271,6 @@ export const useProcessCsv = (journal: Journal) => {
         const buyPrice = parseNumber(buyPriceRaw);
         const sellPrice = parseNumber(sellPriceRaw);
         const pnl = parseNumber(pnlRaw);
-
-        console.log(`📊 Row ${rowIndex} parsed values:`, {
-          symbol,
-          qty,
-          price,
-          buyPrice,
-          sellPrice,
-          pnl
-        });
 
         // Determine the best price to use
         let finalPrice = price;
@@ -316,8 +299,6 @@ export const useProcessCsv = (journal: Journal) => {
           image_url: null
         };
 
-        console.log(`📊 Row ${rowIndex} final trade:`, trade);
-
         // Validate the normalized trade
         const validation = validateTradeData(trade, rowIndex);
         if (!validation.isValid) {
@@ -325,7 +306,7 @@ export const useProcessCsv = (journal: Journal) => {
           continue;
         }
 
-        // Skip mock data
+        // Skip mock data but don't count as error
         if (isMockData(trade)) {
           console.warn(`⚠️ Row ${rowIndex}: Detected mock data, skipping`);
           continue;
@@ -341,7 +322,7 @@ export const useProcessCsv = (journal: Journal) => {
     summary.validTrades = validTrades.length;
     summary.parseErrors = allParseErrors.length;
 
-    console.log(`📊 Broker-agnostic processing summary:`);
+    console.log(`📊 Processing summary:`);
     console.log(`  - Valid trades: ${summary.validTrades}`);
     console.log(`  - Parse errors: ${summary.parseErrors}`);
     
@@ -350,7 +331,6 @@ export const useProcessCsv = (journal: Journal) => {
     }
 
     if (validTrades.length === 0) {
-      // Enhanced error message with specific parsing errors
       const firstTenErrors = allParseErrors.slice(0, 10);
       const errorDetails = firstTenErrors.length > 0 
         ? `\n\nSpecific errors found:\n${firstTenErrors.join('\n')}`
@@ -392,7 +372,7 @@ export const useProcessCsv = (journal: Journal) => {
     
     if (rawError) throw rawError;
 
-    // Calculate metrics
+    // Calculate metrics from parsed trades
     const metrics = calculateMetrics(validTrades as Trade[]);
     console.log('📊 Calculated metrics:', metrics);
 
@@ -408,7 +388,12 @@ export const useProcessCsv = (journal: Journal) => {
       .select()
       .single();
     
-    if (sessionError) throw sessionError;
+    if (sessionError) {
+      console.error('❌ Session creation error:', sessionError);
+      throw sessionError;
+    }
+
+    console.log('✅ Session created successfully:', newSession.id);
 
     /* ------------ Prepare trades data and perform client-side de-duplication ------------ */
     setLoadingMessage('Preparing trades data...');
@@ -420,106 +405,167 @@ export const useProcessCsv = (journal: Journal) => {
       journal_id: journal.id
     }));
 
-    // Perform client-side de-duplication
-    const { unique: uniqueTrades, duplicates: duplicateTrades } = deduplicateTrades(tradesData);
+    // Perform client-side de-duplication against file content only
+    const { unique: uniqueFileTrades, duplicates: fileNameDuplicates } = deduplicateTrades(tradesData);
     
-    console.log(`🔄 De-duplication results:`);
+    console.log(`🔄 File de-duplication results:`);
     console.log(`  - Original trades: ${tradesData.length}`);
-    console.log(`  - Unique trades: ${uniqueTrades.length}`);
-    console.log(`  - Duplicates found: ${duplicateTrades.length}`);
+    console.log(`  - Unique trades in file: ${uniqueFileTrades.length}`);
+    console.log(`  - File duplicates: ${fileNameDuplicates.length}`);
 
-    // Update summary with duplicate information
-    summary.duplicatesSkipped = duplicateTrades.length;
-    summary.duplicateEntries = duplicateTrades.map(trade => ({
-      datetime: trade.datetime,
-      symbol: trade.symbol || '',
-      side: trade.side || '',
-      qty: trade.qty || 0,
-      price: trade.price || 0,
-      pnl: trade.pnl || 0
-    }));
-
-    /* ------------ Insert unique trades with proper duplicate handling ------------ */
-    setLoadingMessage(`Inserting ${uniqueTrades.length} unique trades...`);
+    /* ------------ Insert trades with proper duplicate handling ------------ */
+    setLoadingMessage(`Inserting ${uniqueFileTrades.length} trades...`);
     
-    if (uniqueTrades.length === 0) {
-      console.log('⚠️ No unique trades to insert after de-duplication');
-      summary.newEntriesInserted = 0;
-    } else {
-      const batchSize = 100;
-      let totalInsertedCount = 0;
-      let totalSkippedCount = 0;
+    let insertedCount = 0;
+    let skippedCount = 0;
+    const databaseDuplicates: any[] = [];
 
-      for (let i = 0; i < uniqueTrades.length; i += batchSize) {
-        const batch = uniqueTrades.slice(i, i + batchSize);
+    if (uniqueFileTrades.length === 0) {
+      console.log('⚠️ No unique trades to insert after file de-duplication');
+      summary.newEntriesInserted = 0;
+      summary.duplicatesSkipped = fileNameDuplicates.length;
+    } else {
+      // Insert trades in smaller batches to handle potential duplicates gracefully
+      const batchSize = 50;
+      
+      for (let i = 0; i < uniqueFileTrades.length; i += batchSize) {
+        const batch = uniqueFileTrades.slice(i, i + batchSize);
         
         try {
-          // Use regular insert and handle duplicate key errors gracefully
+          // Try regular insert first
           const { data: insertedData, error: batchError } = await supabase
             .from('trades')
             .insert(batch)
             .select('id');
 
           if (batchError) {
-            // Check if it's a duplicate key error (constraint violation)
             if (batchError.code === '23505') {
-              console.log(`🔄 Batch ${i}-${i + batchSize}: Detected duplicate key constraint violation, skipping duplicates`);
-              totalSkippedCount += batch.length;
+              // Duplicate key error - try inserting one by one to identify duplicates
+              console.log(`🔄 Batch ${i}-${i + batchSize}: Handling duplicates individually`);
+              
+              for (const trade of batch) {
+                try {
+                  const { data: singleInsertData, error: singleError } = await supabase
+                    .from('trades')
+                    .insert([trade])
+                    .select('id');
+                  
+                  if (singleError && singleError.code === '23505') {
+                    // This specific trade is a duplicate
+                    skippedCount++;
+                    databaseDuplicates.push({
+                      datetime: trade.datetime,
+                      symbol: trade.symbol || '',
+                      side: trade.side || '',
+                      qty: trade.qty || 0,
+                      price: trade.price || 0,
+                      pnl: trade.pnl || 0
+                    });
+                  } else if (singleError) {
+                    throw singleError;
+                  } else {
+                    insertedCount++;
+                  }
+                } catch (singleTradeError) {
+                  console.error(`❌ Error inserting individual trade:`, singleTradeError);
+                  allParseErrors.push(`Failed to insert trade: ${(singleTradeError as Error).message}`);
+                }
+              }
             } else {
               console.error(`❌ Error inserting batch ${i}-${i + batchSize}:`, batchError);
               throw batchError;
             }
           } else {
-            const insertedCount = insertedData?.length || 0;
-            totalInsertedCount += insertedCount;
-            console.log(`✅ Processed batch ${i}-${i + batchSize}: ${insertedCount} new trades inserted`);
+            const batchInsertedCount = insertedData?.length || 0;
+            insertedCount += batchInsertedCount;
+            console.log(`✅ Batch ${i}-${i + batchSize}: ${batchInsertedCount} trades inserted`);
           }
         } catch (error) {
-          console.error(`❌ Error inserting batch ${i}-${i + batchSize}:`, error);
+          console.error(`❌ Error processing batch ${i}-${i + batchSize}:`, error);
           throw error;
         }
       }
 
-      summary.newEntriesInserted = totalInsertedCount;
-      summary.duplicatesSkipped += totalSkippedCount; // Add database duplicates to the file duplicates
+      summary.newEntriesInserted = insertedCount;
+      summary.duplicatesSkipped = fileNameDuplicates.length + skippedCount;
+      summary.duplicateEntries = [...fileNameDuplicates.map(trade => ({
+        datetime: trade.datetime,
+        symbol: trade.symbol || '',
+        side: trade.side || '',
+        qty: trade.qty || 0,
+        price: trade.price || 0,
+        pnl: trade.pnl || 0
+      })), ...databaseDuplicates];
 
-      console.log(`📊 Successfully inserted ${totalInsertedCount} new trades`);
-      console.log(`📊 Total duplicates skipped: ${summary.duplicatesSkipped} (${duplicateTrades.length} from file + ${totalSkippedCount} from database)`);
+      console.log(`📊 Final insertion results:`);
+      console.log(`  - Successfully inserted: ${insertedCount} new trades`);
+      console.log(`  - Total duplicates skipped: ${summary.duplicatesSkipped}`);
+      console.log(`  - File duplicates: ${fileNameDuplicates.length}`);
+      console.log(`  - Database duplicates: ${skippedCount}`);
+    }
+
+    /* ------------ Update session with correct trade count ------------ */
+    if (insertedCount > 0) {
+      setLoadingMessage('Updating session metrics...');
+      
+      // Recalculate metrics based on actually inserted trades
+      const { data: actualTrades, error: tradesError } = await supabase
+        .from('trades')
+        .select('*')
+        .eq('session_id', newSession.id);
+      
+      if (!tradesError && actualTrades) {
+        const actualMetrics = calculateMetrics(actualTrades);
+        
+        const { error: updateError } = await supabase
+          .from('trade_sessions')
+          .update(actualMetrics)
+          .eq('id', newSession.id);
+        
+        if (updateError) {
+          console.error('❌ Error updating session metrics:', updateError);
+        } else {
+          console.log(`✅ Session metrics updated with ${actualTrades.length} actual trades`);
+        }
+      }
     }
 
     /* ------------ Generate AI insights (optional) ------------ */
-    try {
-      setLoadingMessage('Generating AI insights...');
-      const { data: insights, error: insightsError } = await supabase.functions.invoke<
-        Partial<Tables<'trade_sessions'>>
-      >('analyze-trades', { body: { trades: uniqueTrades.slice(0, 100) } });
-      
-      if (!insightsError && insights) {
-        await supabase.from('trade_sessions').update(insights).eq('id', newSession.id);
+    if (insertedCount > 0) {
+      try {
+        setLoadingMessage('Generating AI insights...');
+        const { data: insights, error: insightsError } = await supabase.functions.invoke<
+          Partial<Tables<'trade_sessions'>>
+        >('analyze-trades', { body: { trades: uniqueFileTrades.slice(0, 100) } });
+        
+        if (!insightsError && insights) {
+          await supabase.from('trade_sessions').update(insights).eq('id', newSession.id);
+          console.log('✅ AI insights generated and saved');
+        }
+      } catch (err) {
+        console.warn('⚠️ AI insights failed:', err);
       }
-    } catch (err) {
-      console.warn('⚠️ AI insights failed:', err);
     }
 
-    /* ------------ Show enhanced success notification with duplicate info ------------ */
+    /* ------------ Show enhanced success notification ------------ */
     if (summary.duplicatesSkipped > 0) {
       toast({
-        title: '✅ Upload Complete with Duplicates Handled',
-        description: `${summary.newEntriesInserted} new trades added. ${summary.duplicatesSkipped} duplicates were automatically skipped to prevent data conflicts.`,
+        title: '✅ Upload Complete with Smart Duplicate Handling',
+        description: `${summary.newEntriesInserted} new trades processed successfully. ${summary.duplicatesSkipped} duplicates were intelligently detected and skipped.`,
       });
 
-      // Show detailed duplicate information in a separate toast
+      // Show detailed duplicate information
       setTimeout(() => {
         toast({
-          title: '📋 Duplicate Detection Report',
-          description: `Found ${summary.duplicatesSkipped} duplicate trades from previous uploads. These were safely ignored. Your data integrity is maintained.`,
+          title: '🔍 Duplicate Detection Report',
+          description: `Found ${fileNameDuplicates.length} duplicates within your file and ${skippedCount} trades that already exist in your journal. Your data integrity is fully protected.`,
           variant: 'default'
         });
       }, 2000);
     } else {
       toast({
-        title: '✅ Upload Complete!',
-        description: `Successfully processed ${summary.newEntriesInserted} trades with no duplicates detected.`
+        title: '✅ Perfect Upload!',
+        description: `Successfully processed ${summary.newEntriesInserted} trades with zero duplicates detected. All trades are new and unique.`
       });
     }
 
@@ -527,14 +573,18 @@ export const useProcessCsv = (journal: Journal) => {
       setTimeout(() => {
         toast({
           title: '⚠️ Some Rows Skipped',
-          description: `${summary.parseErrors} rows had parsing errors and were skipped. Check the console for details.`,
+          description: `${summary.parseErrors} rows had parsing errors and were skipped. Check the browser console for details.`,
           variant: 'default'
         });
       }, 3000);
     }
 
     setLoadingMessage('');
-    window.location.reload();
+    
+    // Force page reload to show updated data
+    setTimeout(() => {
+      window.location.reload();
+    }, 1000);
   };
 
   return { processCsv, loadingMessage };
