@@ -5,6 +5,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ArrowLeft, Upload, TrendingUp, TrendingDown, MoreHorizontal, Edit, Trash2, Eye, Calendar, DollarSign, Target, BarChart3 } from 'lucide-react';
 import { Tables } from '@/integrations/supabase/types';
 import { calculateMetrics } from '@/lib/trade-metrics';
@@ -12,6 +13,7 @@ import { useMemo, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from '@/components/ui/use-toast';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import CalendarView from '@/components/CalendarView';
 
 type TradeSessionWithTrades = Tables<'trade_sessions'> & { trades: Tables<'trades'>[] };
 type Journal = Tables<'journals'>;
@@ -26,6 +28,7 @@ const JournalDashboard = ({ journal, sessions, onUploadNew }: JournalDashboardPr
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState('sessions');
 
   const aggregatedMetrics = useMemo(() => {
     const allTrades = sessions.flatMap(session => session.trades);
@@ -194,172 +197,191 @@ const JournalDashboard = ({ journal, sessions, onUploadNew }: JournalDashboardPr
           </div>
         )}
 
-        {/* Enhanced Sessions Table */}
-        <Card className="border-0 shadow-xl bg-white/90 backdrop-blur-sm">
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                  <Calendar className="w-5 h-5 text-blue-600" />
-                  Trading Sessions
-                </CardTitle>
-                <CardDescription className="text-slate-600 mt-1">
-                  Click on a session to view detailed analysis, edit, or delete entries.
-                </CardDescription>
-              </div>
-              {sessions.length > 0 && (
-                <Badge variant="outline" className="text-slate-600">
-                  {sessions.length} session{sessions.length !== 1 ? 's' : ''}
-                </Badge>
-              )}
-            </div>
-          </CardHeader>
-          <CardContent>
-            {sessions.length === 0 ? (
-              <div className="text-center py-12 border-2 border-dashed border-slate-200 rounded-lg bg-slate-50/50">
-                <BarChart3 className="w-12 h-12 text-slate-400 mx-auto mb-4" />
-                <h3 className="text-lg font-semibold text-slate-700 mb-2">No Trading Sessions Yet</h3>
-                <p className="text-slate-500 mb-6">Upload your first CSV file to start analyzing your trades.</p>
-                <Button onClick={onUploadNew} className="bg-gradient-to-r from-blue-600 to-green-500 hover:from-blue-700 hover:to-green-600">
-                  <Upload className="mr-2 h-4 w-4" />
-                  Upload Trades Now
-                </Button>
-              </div>
-            ) : (
-              <div className="rounded-lg border border-slate-200 overflow-hidden">
-                <Table>
-                  <TableHeader className="bg-slate-50/80">
-                    <TableRow className="border-b border-slate-200">
-                      <TableHead className="font-semibold text-slate-700">Date</TableHead>
-                      <TableHead className="font-semibold text-slate-700 text-center">Trades</TableHead>
-                      <TableHead className="font-semibold text-slate-700 text-right">P&L</TableHead>
-                      <TableHead className="font-semibold text-slate-700 text-center">Win Rate</TableHead>
-                      <TableHead className="font-semibold text-slate-700">AI Insight</TableHead>
-                      <TableHead className="font-semibold text-slate-700 text-center w-20">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {sessions.map((session, index) => {
-                      const sessionMetrics = calculateMetrics(session.trades);
-                      const isRecent = index < 3;
-                      
-                      return (
-                        <TableRow 
-                          key={session.id}
-                          className={`cursor-pointer transition-all duration-200 hover:bg-blue-50/50 ${isRecent ? 'bg-green-50/30' : ''}`}
-                          onClick={() => handleSessionClick(session.id)}
-                          role="button"
-                          tabIndex={0}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              e.preventDefault();
-                              handleSessionClick(session.id);
-                            }
-                          }}
-                          aria-label={`View session from ${new Date(session.created_at).toLocaleDateString()}`}
-                        >
-                          <TableCell className="font-medium">
-                            <div className="flex items-center gap-2">
-                              <div className="text-slate-800">
-                                {new Date(session.created_at).toLocaleDateString('en-US', {
-                                  month: 'short',
-                                  day: 'numeric',
-                                  year: 'numeric'
-                                })}
-                              </div>
-                              {isRecent && (
-                                <Badge variant="secondary" className="text-xs bg-green-100 text-green-700">
-                                  Recent
-                                </Badge>
-                              )}
-                            </div>
-                            <div className="text-xs text-slate-500 mt-1">
-                              {new Date(session.created_at).toLocaleTimeString('en-US', {
-                                hour: '2-digit',
-                                minute: '2-digit'
-                              })}
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-center">
-                            <Badge variant="outline" className="font-mono">
-                              {sessionMetrics.total_trades}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <Badge 
-                              variant={getPnLBadgeVariant(sessionMetrics.total_pnl)}
-                              className="font-mono font-semibold"
-                            >
-                              {formatCurrency(sessionMetrics.total_pnl)}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-center">
-                            <span className={`font-semibold ${getWinRateColor(sessionMetrics.win_rate)}`}>
-                              {formatPercentage(sessionMetrics.win_rate)}
-                            </span>
-                          </TableCell>
-                          <TableCell className="max-w-xs">
-                            <div className="truncate text-slate-600 text-sm">
-                              {session.ai_key_insight || 'Analysis pending...'}
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-center">
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button 
-                                  variant="ghost" 
-                                  size="sm"
-                                  className="h-8 w-8 p-0 hover:bg-slate-100"
-                                  onClick={(e) => e.stopPropagation()}
-                                >
-                                  <MoreHorizontal className="h-4 w-4" />
-                                  <span className="sr-only">Open menu</span>
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end" className="w-48">
-                                <DropdownMenuItem 
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleSessionClick(session.id);
-                                  }}
-                                  className="flex items-center gap-2"
-                                >
-                                  <Eye className="h-4 w-4" />
-                                  View Details
-                                </DropdownMenuItem>
-                                <DropdownMenuItem 
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    // TODO: Implement edit functionality
-                                    toast({ title: "Feature Coming Soon", description: "Edit functionality will be available in the next update." });
-                                  }}
-                                  className="flex items-center gap-2"
-                                >
-                                  <Edit className="h-4 w-4" />
-                                  Edit Session
-                                </DropdownMenuItem>
-                                <DropdownMenuItem 
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setSessionToDelete(session.id);
-                                  }}
-                                  className="flex items-center gap-2 text-red-600 focus:text-red-600"
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                  Delete Session
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </TableCell>
+        {/* Tabs for Sessions and Calendar View */}
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+          <TabsList className="grid w-full max-w-md grid-cols-2">
+            <TabsTrigger value="sessions" className="flex items-center gap-2">
+              <BarChart3 className="w-4 h-4" />
+              Sessions
+            </TabsTrigger>
+            <TabsTrigger value="calendar" className="flex items-center gap-2">
+              <Calendar className="w-4 h-4" />
+              Calendar
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="sessions">
+            {/* Enhanced Sessions Table */}
+            <Card className="border-0 shadow-xl bg-white/90 backdrop-blur-sm">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                      <Calendar className="w-5 h-5 text-blue-600" />
+                      Trading Sessions
+                    </CardTitle>
+                    <CardDescription className="text-slate-600 mt-1">
+                      Click on a session to view detailed analysis, edit, or delete entries.
+                    </CardDescription>
+                  </div>
+                  {sessions.length > 0 && (
+                    <Badge variant="outline" className="text-slate-600">
+                      {sessions.length} session{sessions.length !== 1 ? 's' : ''}
+                    </Badge>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent>
+                {sessions.length === 0 ? (
+                  <div className="text-center py-12 border-2 border-dashed border-slate-200 rounded-lg bg-slate-50/50">
+                    <BarChart3 className="w-12 h-12 text-slate-400 mx-auto mb-4" />
+                    <h3 className="text-lg font-semibold text-slate-700 mb-2">No Trading Sessions Yet</h3>
+                    <p className="text-slate-500 mb-6">Upload your first CSV file to start analyzing your trades.</p>
+                    <Button onClick={onUploadNew} className="bg-gradient-to-r from-blue-600 to-green-500 hover:from-blue-700 hover:to-green-600">
+                      <Upload className="mr-2 h-4 w-4" />
+                      Upload Trades Now
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-slate-200 overflow-hidden">
+                    <Table>
+                      <TableHeader className="bg-slate-50/80">
+                        <TableRow className="border-b border-slate-200">
+                          <TableHead className="font-semibold text-slate-700">Date</TableHead>
+                          <TableHead className="font-semibold text-slate-700 text-center">Trades</TableHead>
+                          <TableHead className="font-semibold text-slate-700 text-right">P&L</TableHead>
+                          <TableHead className="font-semibold text-slate-700 text-center">Win Rate</TableHead>
+                          <TableHead className="font-semibold text-slate-700">AI Insight</TableHead>
+                          <TableHead className="font-semibold text-slate-700 text-center w-20">Actions</TableHead>
                         </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+                      </TableHeader>
+                      <TableBody>
+                        {sessions.map((session, index) => {
+                          const sessionMetrics = calculateMetrics(session.trades);
+                          const isRecent = index < 3;
+                          
+                          return (
+                            <TableRow 
+                              key={session.id}
+                              className={`cursor-pointer transition-all duration-200 hover:bg-blue-50/50 ${isRecent ? 'bg-green-50/30' : ''}`}
+                              onClick={() => handleSessionClick(session.id)}
+                              role="button"
+                              tabIndex={0}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.preventDefault();
+                                  handleSessionClick(session.id);
+                                }
+                              }}
+                              aria-label={`View session from ${new Date(session.created_at).toLocaleDateString()}`}
+                            >
+                              <TableCell className="font-medium">
+                                <div className="flex items-center gap-2">
+                                  <div className="text-slate-800">
+                                    {new Date(session.created_at).toLocaleDateString('en-US', {
+                                      month: 'short',
+                                      day: 'numeric',
+                                      year: 'numeric'
+                                    })}
+                                  </div>
+                                  {isRecent && (
+                                    <Badge variant="secondary" className="text-xs bg-green-100 text-green-700">
+                                      Recent
+                                    </Badge>
+                                  )}
+                                </div>
+                                <div className="text-xs text-slate-500 mt-1">
+                                  {new Date(session.created_at).toLocaleTimeString('en-US', {
+                                    hour: '2-digit',
+                                    minute: '2-digit'
+                                  })}
+                                </div>
+                              </TableCell>
+                              <TableCell className="text-center">
+                                <Badge variant="outline" className="font-mono">
+                                  {sessionMetrics.total_trades}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="text-right">
+                                <Badge 
+                                  variant={getPnLBadgeVariant(sessionMetrics.total_pnl)}
+                                  className="font-mono font-semibold"
+                                >
+                                  {formatCurrency(sessionMetrics.total_pnl)}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="text-center">
+                                <span className={`font-semibold ${getWinRateColor(sessionMetrics.win_rate)}`}>
+                                  {formatPercentage(sessionMetrics.win_rate)}
+                                </span>
+                              </TableCell>
+                              <TableCell className="max-w-xs">
+                                <div className="truncate text-slate-600 text-sm">
+                                  {session.ai_key_insight || 'Analysis pending...'}
+                                </div>
+                              </TableCell>
+                              <TableCell className="text-center">
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button 
+                                      variant="ghost" 
+                                      size="sm"
+                                      className="h-8 w-8 p-0 hover:bg-slate-100"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      <MoreHorizontal className="h-4 w-4" />
+                                      <span className="sr-only">Open menu</span>
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end" className="w-48">
+                                    <DropdownMenuItem 
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleSessionClick(session.id);
+                                      }}
+                                      className="flex items-center gap-2"
+                                    >
+                                      <Eye className="h-4 w-4" />
+                                      View Details
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem 
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        toast({ title: "Feature Coming Soon", description: "Edit functionality will be available in the next update." });
+                                      }}
+                                      className="flex items-center gap-2"
+                                    >
+                                      <Edit className="h-4 w-4" />
+                                      Edit Session
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem 
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setSessionToDelete(session.id);
+                                      }}
+                                      className="flex items-center gap-2 text-red-600 focus:text-red-600"
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                      Delete Session
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="calendar">
+            <CalendarView sessions={sessions} onSessionClick={handleSessionClick} />
+          </TabsContent>
+        </Tabs>
       </div>
 
       {/* Delete Confirmation Dialog */}

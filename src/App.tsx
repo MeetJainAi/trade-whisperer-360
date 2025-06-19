@@ -1,4 +1,3 @@
-
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -12,6 +11,7 @@ import MindsetMirror from "./pages/MindsetMirror";
 import Journals from "./pages/Journals";
 import JournalDetail from "./pages/JournalDetail";
 import SessionDetail from "./pages/SessionDetail";
+import TradeNotes from "./pages/TradeNotes";
 import NotFound from "./pages/NotFound";
 import Auth from "./pages/Auth";
 import { AuthProvider } from "./components/AuthProvider";
@@ -47,6 +47,7 @@ function App() {
                 <Route path="/journals" element={<Journals />} />
                 <Route path="/journals/:journalId" element={<JournalDetail />} />
                 <Route path="/journals/:journalId/sessions/:sessionId" element={<SessionDetail />} />
+                <Route path="/trade-notes/:tradeId" element={<TradeNotes />} />
               </Route>
               
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}

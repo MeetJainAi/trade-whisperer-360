@@ -501,34 +501,36 @@ export const useProcessCsv = (journal: Journal) => {
       console.warn('⚠️ AI insights failed:', err);
     }
 
-    /* ------------ Show success notification ------------ */
-    const successMessage = summary.duplicatesSkipped > 0
-      ? `Successfully processed ${summary.newEntriesInserted} new trades. ${summary.duplicatesSkipped} duplicates were skipped.`
-      : `Successfully processed ${summary.newEntriesInserted} trades.`;
+    /* ------------ Show enhanced success notification with duplicate info ------------ */
+    if (summary.duplicatesSkipped > 0) {
+      toast({
+        title: '✅ Upload Complete with Duplicates Handled',
+        description: `${summary.newEntriesInserted} new trades added. ${summary.duplicatesSkipped} duplicates were automatically skipped to prevent data conflicts.`,
+      });
 
-    toast({
-      title: 'Upload Complete!',
-      description: successMessage
-    });
+      // Show detailed duplicate information in a separate toast
+      setTimeout(() => {
+        toast({
+          title: '📋 Duplicate Detection Report',
+          description: `Found ${summary.duplicatesSkipped} duplicate trades from previous uploads. These were safely ignored. Your data integrity is maintained.`,
+          variant: 'default'
+        });
+      }, 2000);
+    } else {
+      toast({
+        title: '✅ Upload Complete!',
+        description: `Successfully processed ${summary.newEntriesInserted} trades with no duplicates detected.`
+      });
+    }
 
     if (summary.parseErrors > 0) {
       setTimeout(() => {
         toast({
-          title: 'Some Rows Skipped',
+          title: '⚠️ Some Rows Skipped',
           description: `${summary.parseErrors} rows had parsing errors and were skipped. Check the console for details.`,
           variant: 'default'
         });
-      }, 2000);
-    }
-
-    if (summary.duplicatesSkipped > 0) {
-      setTimeout(() => {
-        toast({
-          title: 'Duplicate Trades Found',
-          description: `${summary.duplicatesSkipped} duplicate trades were identified and skipped to prevent data duplication.`,
-          variant: 'default'
-        });
-      }, 4000);
+      }, 3000);
     }
 
     setLoadingMessage('');

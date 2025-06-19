@@ -1,4 +1,3 @@
-
 import { useMemo, useState } from "react";
 import {
   Table,
@@ -14,7 +13,11 @@ import { format } from 'date-fns';
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { ListFilter, SortAsc, SortDesc } from "lucide-react";
+import { ListFilter, SortAsc, SortDesc, Edit, FileText, MoreHorizontal, Save, X } from "lucide-react";
+import { useNavigate } from 'react-router-dom';
+import { supabase } from '@/integrations/supabase/client';
+import { toast } from '@/components/ui/use-toast';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 interface TradesLogTableProps {
   trades: Tables<'trades'>[];
@@ -23,6 +26,8 @@ interface TradesLogTableProps {
 type SortableKey = keyof Pick<Tables<'trades'>, 'datetime' | 'symbol' | 'side' | 'qty' | 'price' | 'pnl'>;
 
 const TradesLogTable = ({ trades }: TradesLogTableProps) => {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [filters, setFilters] = useState({
     symbol: '',
     side: 'All' as 'All' | 'BUY' | 'SELL',
@@ -31,6 +36,31 @@ const TradesLogTable = ({ trades }: TradesLogTableProps) => {
   const [sortConfig, setSortConfig] = useState<{ key: SortableKey; direction: 'ascending' | 'descending' } | null>({
     key: 'datetime',
     direction: 'descending',
+  });
+
+  const [editingTrade, setEditingTrade] = useState<string | null>(null);
+  const [editFormData, setEditFormData] = useState<Partial<Tables<'trades'>>>({});
+
+  const updateTradeMutation = useMutation({
+    mutationFn: async ({ tradeId, updates }: { tradeId: string; updates: Partial<Tables<'trades'>> }) => {
+      const { data, error } = await supabase
+        .from('trades')
+        .update(updates)
+        .eq('id', tradeId)
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['journalWithSessions'] });
+      toast({ title: "Success", description: "Trade updated successfully." });
+      setEditingTrade(null);
+      setEditFormData({});
+    },
+    onError: (error: any) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
   });
 
   const handleFilterChange = (key: keyof typeof filters, value: string) => {
@@ -43,6 +73,34 @@ const TradesLogTable = ({ trades }: TradesLogTableProps) => {
       direction = 'descending';
     }
     setSortConfig({ key, direction });
+  };
+
+  const handleEditTrade = (trade: Tables<'trades'>) => {
+    setEditingTrade(trade.id);
+    setEditFormData({
+      symbol: trade.symbol,
+      side: trade.side,
+      qty: trade.qty,
+      price: trade.price,
+      pnl: trade.pnl,
+      notes: trade.notes,
+      strategy: (trade as any).strategy,
+      tags: (trade as any).tags,
+    });
+  };
+
+  const handleSaveEdit = () => {
+    if (!editingTrade) return;
+    updateTradeMutation.mutate({ tradeId: editingTrade, updates: editFormData });
+  };
+
+  const handleCancelEdit = () => {
+    setEditingTrade(null);
+    setEditFormData({});
+  };
+
+  const handleViewNotes = (tradeId: string) => {
+    navigate(`/trade-notes/${tradeId}`);
   };
 
   const sortedAndFilteredTrades = useMemo(() => {
@@ -128,38 +186,169 @@ const TradesLogTable = ({ trades }: TradesLogTableProps) => {
             <SortableHeader sortKey="pnl">P&L</SortableHeader>
             <TableHead>Strategy</TableHead>
             <TableHead>Tags</TableHead>
-            <TableHead>Notes</TableHead>
+            <TableHead>Quick Notes</TableHead>
             <TableHead>Chart</TableHead>
+            <TableHead>Actions</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {sortedAndFilteredTrades.map((trade) => (
             <TableRow key={trade.id}>
               <TableCell>{format(new Date(trade.datetime), 'PPpp')}</TableCell>
-              <TableCell className="font-medium">{trade.symbol}</TableCell>
+              
+              {/* Symbol - Editable */}
+              <TableCell className="font-medium">
+                {editingTrade === trade.id ? (
+                  <Input
+                    value={editFormData.symbol || ''}
+                    onChange={(e) => setEditFormData(prev => ({ ...prev, symbol: e.target.value }))}
+                    className="w-20 h-8"
+                  />
+                ) : (
+                  trade.symbol
+                )}
+              </TableCell>
+              
+              {/* Side - Editable */}
               <TableCell>
+                {editingTrade === trade.id ? (
+                  <select
+                    value={editFormData.side || ''}
+                    onChange={(e) => setEditFormData(prev => ({ ...prev, side: e.target.value as 'BUY' | 'SELL' }))}
+                    className="w-20 h-8 border rounded px-2"
+                  >
+                    <option value="BUY">BUY</option>
+                    <option value="SELL">SELL</option>
+                  </select>
+                ) : (
                   <span className={`font-semibold ${trade.side?.toUpperCase() === 'BUY' ? 'text-green-600' : 'text-red-600'}`}>
-                      {trade.side?.toUpperCase()}
+                    {trade.side?.toUpperCase()}
                   </span>
+                )}
               </TableCell>
-              <TableCell>{trade.qty}</TableCell>
-              <TableCell>${trade.price?.toFixed(2)}</TableCell>
-              <TableCell className={`font-medium ${trade.pnl && trade.pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                {trade.pnl && trade.pnl >= 0 ? '+' : ''}{trade.pnl?.toFixed(2)}
+              
+              {/* Quantity - Editable */}
+              <TableCell>
+                {editingTrade === trade.id ? (
+                  <Input
+                    type="number"
+                    value={editFormData.qty || ''}
+                    onChange={(e) => setEditFormData(prev => ({ ...prev, qty: Number(e.target.value) }))}
+                    className="w-20 h-8"
+                  />
+                ) : (
+                  trade.qty
+                )}
               </TableCell>
-              <TableCell>{(trade as any).strategy}</TableCell>
+              
+              {/* Price - Editable */}
+              <TableCell>
+                {editingTrade === trade.id ? (
+                  <Input
+                    type="number"
+                    step="0.01"
+                    value={editFormData.price || ''}
+                    onChange={(e) => setEditFormData(prev => ({ ...prev, price: Number(e.target.value) }))}
+                    className="w-24 h-8"
+                  />
+                ) : (
+                  `$${trade.price?.toFixed(2)}`
+                )}
+              </TableCell>
+              
+              {/* P&L - Editable */}
+              <TableCell>
+                {editingTrade === trade.id ? (
+                  <Input
+                    type="number"
+                    step="0.01"
+                    value={editFormData.pnl || ''}
+                    onChange={(e) => setEditFormData(prev => ({ ...prev, pnl: Number(e.target.value) }))}
+                    className="w-24 h-8"
+                  />
+                ) : (
+                  <span className={`font-medium ${trade.pnl && trade.pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {trade.pnl && trade.pnl >= 0 ? '+' : ''}{trade.pnl?.toFixed(2)}
+                  </span>
+                )}
+              </TableCell>
+              
+              {/* Strategy - Editable */}
+              <TableCell>
+                {editingTrade === trade.id ? (
+                  <Input
+                    value={editFormData.strategy || ''}
+                    onChange={(e) => setEditFormData(prev => ({ ...prev, strategy: e.target.value }))}
+                    className="w-24 h-8"
+                    placeholder="Strategy"
+                  />
+                ) : (
+                  (trade as any).strategy
+                )}
+              </TableCell>
+              
+              {/* Tags */}
               <TableCell className="max-w-[200px]">
                 {(trade as any).tags?.map((tag: string, index: number) => (
                   <Badge key={`${trade.id}-${tag}-${index}`} variant="outline" className="mr-1 mb-1 font-normal">{tag}</Badge>
                 ))}
               </TableCell>
-              <TableCell className="text-slate-600 max-w-[250px] truncate">{trade.notes}</TableCell>
+              
+              {/* Quick Notes - Editable */}
+              <TableCell className="max-w-[250px]">
+                {editingTrade === trade.id ? (
+                  <Input
+                    value={editFormData.notes || ''}
+                    onChange={(e) => setEditFormData(prev => ({ ...prev, notes: e.target.value }))}
+                    className="w-32 h-8"
+                    placeholder="Quick notes..."
+                  />
+                ) : (
+                  <span className="text-slate-600 truncate">
+                    {trade.notes || '-'}
+                  </span>
+                )}
+              </TableCell>
+              
+              {/* Chart */}
               <TableCell>
-                  {(trade as any).image_url && (
-                      <a href={(trade as any).image_url} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">
-                          View
-                      </a>
-                  )}
+                {(trade as any).image_url && (
+                  <a href={(trade as any).image_url} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">
+                    View
+                  </a>
+                )}
+              </TableCell>
+              
+              {/* Actions */}
+              <TableCell>
+                {editingTrade === trade.id ? (
+                  <div className="flex space-x-1">
+                    <Button size="sm" variant="outline" onClick={handleSaveEdit} disabled={updateTradeMutation.isPending}>
+                      <Save className="w-3 h-3" />
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={handleCancelEdit}>
+                      <X className="w-3 h-3" />
+                    </Button>
+                  </div>
+                ) : (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                        <MoreHorizontal className="h-4 w-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => handleEditTrade(trade)}>
+                        <Edit className="h-4 w-4 mr-2" />
+                        Edit Trade
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => handleViewNotes(trade.id)}>
+                        <FileText className="h-4 w-4 mr-2" />
+                        Detailed Notes
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
               </TableCell>
             </TableRow>
           ))}
