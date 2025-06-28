@@ -499,7 +499,7 @@ export const useProcessCsv = (journal: Journal) => {
 
     console.log('✅ Session created with ID:', newSession.id);
 
-    /* ------------ Step 9: Insert trades ------------ */
+    /* ------------ Step 9: Insert trades with duplicate handling ------------ */
     setLoadingMessage(`Inserting ${csvUniqueTrades.length} trades...`);
     
     // Set session_id for all trades
@@ -512,9 +512,12 @@ export const useProcessCsv = (journal: Journal) => {
 
     if (tradesWithSession.length > 0) {
       try {
+        // Use upsert with ignoreDuplicates to handle any remaining duplicates gracefully
         const { data: insertedTrades, error: insertError } = await supabase
           .from('trades')
-          .insert(tradesWithSession)
+          .upsert(tradesWithSession, { 
+            ignoreDuplicates: true 
+          })
           .select('id');
 
         if (insertError) {
