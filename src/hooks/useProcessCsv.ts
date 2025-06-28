@@ -512,11 +512,12 @@ export const useProcessCsv = (journal: Journal) => {
 
     if (tradesWithSession.length > 0) {
       try {
-        // Use upsert with ignoreDuplicates to handle any remaining duplicates gracefully
+        // Use upsert with onConflict to handle the unique composite constraint
         const { data: insertedTrades, error: insertError } = await supabase
           .from('trades')
           .upsert(tradesWithSession, { 
-            ignoreDuplicates: true 
+            ignoreDuplicates: true,
+            onConflict: 'journal_id,datetime,symbol,side,qty,price,pnl'
           })
           .select('id');
 
