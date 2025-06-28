@@ -79,8 +79,8 @@ const createDatabaseKey = (trade: any): string => {
     normalizedSymbol,
     normalizedSide,
     Number(trade.qty || 0).toString(),
-    Number(trade.price || 0).toFixed(4),
-    Number(trade.pnl || 0).toFixed(2)
+    String(Number(trade.price || 0)),
+    String(Number(trade.pnl || 0))
   ].join('|');
 };
 
