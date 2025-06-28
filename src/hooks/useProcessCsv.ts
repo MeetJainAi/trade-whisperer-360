@@ -67,31 +67,24 @@ const validateTradeData = (trade: any, rowIndex: number): { isValid: boolean; er
   return { isValid: errors.length === 0, errors };
 };
 
-/** Create normalized composite key exactly matching the database constraint */
-const createDatabaseKey = (trade: any): string => {
-  // Match the exact database constraint: journal_id, datetime, symbol, side, qty, price, pnl
-  const normalizedSymbol = (trade.symbol || '').toString().toUpperCase().trim();
-  const normalizedSide = (trade.side || '').toString().toUpperCase().trim();
-  
-  return [
-    trade.journal_id,
-    trade.datetime,
-    normalizedSymbol,
-    normalizedSide,
-    Number(trade.qty || 0).toString(),
-    String(Number(trade.price || 0)),
-    String(Number(trade.pnl || 0))
-  ].join('|');
-};
-
-/** Remove exact duplicates within the CSV file */
+/** Remove exact duplicates within the CSV file using a simple composite key */
 const removeCsvDuplicates = (trades: any[]): { unique: any[], duplicates: any[] } => {
   const seen = new Set<string>();
   const unique: any[] = [];
   const duplicates: any[] = [];
   
   for (const trade of trades) {
-    const key = createDatabaseKey(trade);
+    // Create a simple key for CSV-level duplicate detection
+    const key = [
+      trade.journal_id,
+      trade.datetime,
+      (trade.symbol || '').toString().toUpperCase().trim(),
+      (trade.side || '').toString().toUpperCase().trim(),
+      Number(trade.qty || 0).toString(),
+      Number(trade.price || 0).toString(),
+      Number(trade.pnl || 0).toString()
+    ].join('|');
+    
     if (seen.has(key)) {
       duplicates.push(trade);
       console.log(`🔍 CSV Duplicate found:`, trade.symbol, trade.datetime, trade.pnl);
@@ -412,40 +405,60 @@ export const useProcessCsv = (journal: Journal) => {
     console.log(`  - After removing CSV duplicates: ${csvUniqueTrades.length}`);
     console.log(`  - CSV duplicates removed: ${csvDuplicates.length}`);
 
-    /* ------------ Step 5: Check for database duplicates ------------ */
+    /* ------------ Step 5: Check database duplicates using SQL function ------------ */
     setLoadingMessage('Checking database for existing trades...');
     
-    let existingTradesCount = 0;
+    let finalTrades = csvUniqueTrades;
+    let databaseDuplicateCount = 0;
+
     if (csvUniqueTrades.length > 0) {
       try {
-        // Get existing trades for this journal to check duplicates
-        const { data: existingTrades, error } = await supabase
-          .from('trades')
-          .select('datetime, symbol, side, qty, price, pnl')
-          .eq('journal_id', journal.id);
-        
-        if (!error && existingTrades) {
-          const existingKeys = new Set(existingTrades.map(t => createDatabaseKey({ ...t, journal_id: journal.id })));
-          const newTradesOnly = csvUniqueTrades.filter(trade => {
-            const key = createDatabaseKey(trade);
-            return !existingKeys.has(key);
+        // Prepare trades data for the SQL function
+        const tradesForCheck = csvUniqueTrades.map(trade => ({
+          datetime: trade.datetime,
+          symbol: trade.symbol,
+          side: trade.side,
+          qty: trade.qty,
+          price: trade.price,
+          pnl: trade.pnl
+        }));
+
+        // Use the database function to check for duplicates
+        const { data: duplicateResults, error: duplicateError } = await supabase
+          .rpc('get_duplicate_trades', {
+            p_journal_id: journal.id,
+            p_trades: tradesForCheck
           });
+
+        if (!duplicateError && duplicateResults) {
+          console.log(`🔍 Database duplicate check results:`, duplicateResults);
           
-          existingTradesCount = csvUniqueTrades.length - newTradesOnly.length;
-          csvUniqueTrades.splice(0, csvUniqueTrades.length, ...newTradesOnly);
-          
-          console.log(`🔍 Database Duplicate Check:`);
-          console.log(`  - Trades after DB duplicate check: ${csvUniqueTrades.length}`);
-          console.log(`  - Database duplicates found: ${existingTradesCount}`);
+          // Filter out duplicates
+          finalTrades = csvUniqueTrades.filter((_, index) => {
+            const result = duplicateResults.find(r => r.trade_index === index);
+            const isDuplicate = result?.is_duplicate || false;
+            if (isDuplicate) databaseDuplicateCount++;
+            return !isDuplicate;
+          });
+
+          console.log(`📊 Database Duplicate Summary:`);
+          console.log(`  - Checked trades: ${csvUniqueTrades.length}`);
+          console.log(`  - Database duplicates found: ${databaseDuplicateCount}`);
+          console.log(`  - Final unique trades: ${finalTrades.length}`);
+        } else {
+          console.warn('⚠️ Could not check database duplicates, proceeding with all trades');
+          if (duplicateError) {
+            console.error('Database duplicate check error:', duplicateError);
+          }
         }
       } catch (error) {
-        console.warn('⚠️ Could not check for database duplicates:', error);
+        console.warn('⚠️ Database duplicate check failed:', error);
       }
     }
 
-    if (csvUniqueTrades.length === 0) {
-      const totalDuplicates = summary.duplicatesSkipped + existingTradesCount;
-      throw new Error(`No new trades to import. All ${validTrades.length} trades are duplicates (${summary.duplicatesSkipped} from CSV, ${existingTradesCount} already in database).`);
+    if (finalTrades.length === 0) {
+      const totalDuplicates = summary.duplicatesSkipped + databaseDuplicateCount;
+      throw new Error(`No new trades to import. All ${validTrades.length} trades are duplicates (${summary.duplicatesSkipped} from CSV, ${databaseDuplicateCount} already in database).`);
     }
 
     /* ------------ Step 6: Store raw data ------------ */
@@ -460,8 +473,10 @@ export const useProcessCsv = (journal: Journal) => {
         data: { 
           mapping: headerMapping, 
           totalRows: csvData.length,
-          validTrades: csvUniqueTrades.length,
-          parseErrors: parseErrors.length
+          validTrades: finalTrades.length,
+          parseErrors: parseErrors.length,
+          csvDuplicates: summary.duplicatesSkipped,
+          databaseDuplicates: databaseDuplicateCount
         }
       })
       .select()
@@ -475,7 +490,7 @@ export const useProcessCsv = (journal: Journal) => {
     console.log('✅ Raw data stored with ID:', rawData.id);
 
     /* ------------ Step 7: Calculate preliminary metrics ------------ */
-    const preliminaryMetrics = calculateMetrics(csvUniqueTrades as Trade[]);
+    const preliminaryMetrics = calculateMetrics(finalTrades as Trade[]);
     console.log('📊 Preliminary metrics:', preliminaryMetrics);
 
     /* ------------ Step 8: Create session ------------ */
@@ -499,11 +514,11 @@ export const useProcessCsv = (journal: Journal) => {
 
     console.log('✅ Session created with ID:', newSession.id);
 
-    /* ------------ Step 9: Insert trades with duplicate handling ------------ */
-    setLoadingMessage(`Inserting ${csvUniqueTrades.length} trades...`);
+    /* ------------ Step 9: Insert trades ------------ */
+    setLoadingMessage(`Inserting ${finalTrades.length} trades...`);
     
     // Set session_id for all trades
-    const tradesWithSession = csvUniqueTrades.map(trade => ({
+    const tradesWithSession = finalTrades.map(trade => ({
       ...trade,
       session_id: newSession.id
     }));
@@ -512,17 +527,18 @@ export const useProcessCsv = (journal: Journal) => {
 
     if (tradesWithSession.length > 0) {
       try {
-        // Use upsert with onConflict to handle the unique composite constraint
+        // Simple insert - duplicates should already be filtered out
         const { data: insertedTrades, error: insertError } = await supabase
           .from('trades')
-          .upsert(tradesWithSession, { 
-            ignoreDuplicates: true,
-            onConflict: 'journal_id,datetime,symbol,side,qty,price,pnl'
-          })
+          .insert(tradesWithSession)
           .select('id');
 
         if (insertError) {
           console.error('❌ Batch insert failed:', insertError);
+          // If we still get a constraint error, it means our duplicate detection missed something
+          if (insertError.code === '23505' && insertError.message?.includes('idx_trades_unique_composite')) {
+            throw new Error('Some trades already exist in the database. Our duplicate detection may have missed a few trades due to minor formatting differences. Please try again or check your data for very similar trades.');
+          }
           throw insertError;
         }
 
@@ -533,12 +549,12 @@ export const useProcessCsv = (journal: Journal) => {
 
       } catch (error) {
         console.error('❌ Trade insertion failed:', error);
-        throw new Error(`Failed to insert trades: ${(error as Error).message}`);
+        throw error;
       }
     }
 
     summary.insertedTrades = insertedCount;
-    summary.skippedDuplicates = existingTradesCount;
+    summary.skippedDuplicates = databaseDuplicateCount;
 
     /* ------------ Step 10: Update session with actual metrics ------------ */
     if (insertedCount > 0) {
@@ -593,7 +609,7 @@ export const useProcessCsv = (journal: Journal) => {
       // Delete the empty session
       await supabase.from('trade_sessions').delete().eq('id', newSession.id);
       
-      throw new Error(`No new trades were inserted. All ${csvUniqueTrades.length} trades appear to be duplicates of existing data in your journal.`);
+      throw new Error(`No new trades were inserted. All ${finalTrades.length} trades appear to be duplicates of existing data in your journal.`);
     }
     
     // Success notification
