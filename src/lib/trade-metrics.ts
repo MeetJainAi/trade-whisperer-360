@@ -23,9 +23,40 @@ interface CalculatedMetrics {
 }
 
 export const calculateMetrics = (trades: Trade[]): CalculatedMetrics => {
+  // Handle empty or invalid input
+  if (!trades || !Array.isArray(trades) || trades.length === 0) {
+    return {
+      total_pnl: 0,
+      total_trades: 0,
+      win_rate: 0,
+      avg_win: 0,
+      avg_loss: 0,
+      max_drawdown: 0,
+      equity_curve: [],
+      time_data: [],
+      profit_factor: 0,
+      trades_by_day: [],
+      trades_by_symbol: [],
+      largest_win: 0,
+      largest_loss: 0,
+      max_win_streak: 0,
+      max_loss_streak: 0,
+      expectancy: 0,
+      reward_risk_ratio: 0,
+    };
+  }
+
   const total_trades = trades.length;
   
-  if (total_trades === 0) {
+  // Filter out trades with invalid data
+  const validTrades = trades.filter(trade => 
+    trade.datetime && 
+    trade.pnl !== null && 
+    trade.pnl !== undefined && 
+    !isNaN(Number(trade.pnl))
+  );
+
+  if (validTrades.length === 0) {
     return {
       total_pnl: 0,
       total_trades: 0,
@@ -48,7 +79,7 @@ export const calculateMetrics = (trades: Trade[]): CalculatedMetrics => {
   }
 
   // Sort trades by datetime for proper equity curve calculation
-  const sortedTrades = [...trades].sort((a, b) => {
+  const sortedTrades = [...validTrades].sort((a, b) => {
     const dateA = new Date(a.datetime || 0);
     const dateB = new Date(b.datetime || 0);
     return dateA.getTime() - dateB.getTime();
@@ -113,23 +144,30 @@ export const calculateMetrics = (trades: Trade[]): CalculatedMetrics => {
 
     // Time-based grouping
     if (trade.datetime) {
-      const date = new Date(trade.datetime);
+      try {
+        const date = new Date(trade.datetime);
 
-      // Time data (hour:minute)
-      const time_key = `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
-      if (!trades_by_time[time_key]) {
-        trades_by_time[time_key] = { time: time_key, trades: 0, pnl: 0 };
-      }
-      trades_by_time[time_key].trades += 1;
-      trades_by_time[time_key].pnl += pnl;
+        // Validate date
+        if (!isNaN(date.getTime())) {
+          // Time data (hour:minute)
+          const time_key = `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+          if (!trades_by_time[time_key]) {
+            trades_by_time[time_key] = { time: time_key, trades: 0, pnl: 0 };
+          }
+          trades_by_time[time_key].trades += 1;
+          trades_by_time[time_key].pnl += pnl;
 
-      // Day of week data
-      const day_key = date.toLocaleString('en-US', { weekday: 'long' });
-      if (!trades_by_day[day_key]) {
-        trades_by_day[day_key] = { day: day_key, trades: 0, pnl: 0 };
+          // Day of week data
+          const day_key = date.toLocaleString('en-US', { weekday: 'long' });
+          if (!trades_by_day[day_key]) {
+            trades_by_day[day_key] = { day: day_key, trades: 0, pnl: 0 };
+          }
+          trades_by_day[day_key].trades += 1;
+          trades_by_day[day_key].pnl += pnl;
+        }
+      } catch (error) {
+        console.warn('Invalid datetime for trade:', trade.datetime);
       }
-      trades_by_day[day_key].trades += 1;
-      trades_by_day[day_key].pnl += pnl;
     }
     
     // Symbol data

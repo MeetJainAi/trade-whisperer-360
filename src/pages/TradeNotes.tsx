@@ -28,7 +28,7 @@ const TradeNotes = () => {
   const [lessons, setLessons] = useState('');
   const [mistakes, setMistakes] = useState('');
 
-  const { data: trade, isLoading } = useQuery<Tables<'trades'>>({
+  const { data: trade, isLoading, error } = useQuery<Tables<'trades'>>({
     queryKey: ['trade', tradeId],
     queryFn: async () => {
       if (!tradeId) throw new Error('No trade ID provided');
@@ -47,10 +47,12 @@ const TradeNotes = () => {
 
   const updateTradeMutation = useMutation({
     mutationFn: async (updates: Partial<Tables<'trades'>>) => {
+      if (!tradeId) throw new Error('No trade ID provided');
+      
       const { data, error } = await supabase
         .from('trades')
         .update(updates)
-        .eq('id', tradeId!)
+        .eq('id', tradeId)
         .select()
         .single();
       if (error) throw error;
@@ -73,15 +75,23 @@ const TradeNotes = () => {
       
       // Parse detailed notes if they exist
       try {
-        const detailedNotes = JSON.parse(trade.notes || '{}');
-        if (typeof detailedNotes === 'object') {
-          setReasoning(detailedNotes.reasoning || '');
-          setEmotions(detailedNotes.emotions || '');
-          setLessons(detailedNotes.lessons || '');
-          setMistakes(detailedNotes.mistakes || '');
+        if (trade.notes) {
+          const detailedNotes = JSON.parse(trade.notes);
+          if (typeof detailedNotes === 'object') {
+            setReasoning(detailedNotes.reasoning || '');
+            setEmotions(detailedNotes.emotions || '');
+            setLessons(detailedNotes.lessons || '');
+            setMistakes(detailedNotes.mistakes || '');
+          } else {
+            // If notes is not JSON, keep it as simple notes
+            setReasoning(trade.notes);
+          }
         }
       } catch {
         // If notes is not JSON, keep it as simple notes
+        if (trade.notes) {
+          setReasoning(trade.notes);
+        }
       }
     }
   }, [trade]);
@@ -124,7 +134,7 @@ const TradeNotes = () => {
     );
   }
 
-  if (!trade) {
+  if (error || !trade) {
     return (
       <div className="flex items-center justify-center h-screen">
         <div className="text-center">
@@ -153,7 +163,9 @@ const TradeNotes = () => {
               </div>
               <div>
                 <h1 className="text-2xl font-bold text-slate-800">Trade Analysis</h1>
-                <p className="text-sm text-slate-600">{trade.symbol} • {format(new Date(trade.datetime), 'PPP')}</p>
+                <p className="text-sm text-slate-600">
+                  {trade.symbol} • {trade.datetime ? format(new Date(trade.datetime), 'PPP') : 'Unknown Date'}
+                </p>
               </div>
             </div>
             <Button 
@@ -185,20 +197,22 @@ const TradeNotes = () => {
                 </div>
                 <div>
                   <p className="text-sm text-slate-600">Date & Time</p>
-                  <p className="font-semibold">{format(new Date(trade.datetime), 'MMM dd, yyyy HH:mm')}</p>
+                  <p className="font-semibold">
+                    {trade.datetime ? format(new Date(trade.datetime), 'MMM dd, yyyy HH:mm') : 'Unknown'}
+                  </p>
                 </div>
               </div>
               
               <div className="flex items-center space-x-3">
                 <div className="w-12 h-12 rounded-xl bg-purple-100 flex items-center justify-center">
-                  <span className="font-bold text-purple-600">{trade.symbol}</span>
+                  <span className="font-bold text-purple-600">{trade.symbol || 'N/A'}</span>
                 </div>
                 <div>
                   <p className="text-sm text-slate-600">Symbol & Side</p>
                   <p className="font-semibold">
-                    {trade.symbol} • 
+                    {trade.symbol || 'N/A'} • 
                     <span className={`ml-1 ${trade.side === 'BUY' ? 'text-green-600' : 'text-red-600'}`}>
-                      {trade.side}
+                      {trade.side || 'N/A'}
                     </span>
                   </p>
                 </div>
@@ -210,7 +224,7 @@ const TradeNotes = () => {
                 </div>
                 <div>
                   <p className="text-sm text-slate-600">Qty × Price</p>
-                  <p className="font-semibold">{trade.qty} × ${trade.price?.toFixed(2)}</p>
+                  <p className="font-semibold">{trade.qty || 0} × ${(trade.price || 0).toFixed(2)}</p>
                 </div>
               </div>
               
@@ -227,7 +241,7 @@ const TradeNotes = () => {
                 <div>
                   <p className="text-sm text-slate-600">P&L</p>
                   <p className={`font-semibold text-lg ${(trade.pnl || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {(trade.pnl || 0) >= 0 ? '+' : ''}${trade.pnl?.toFixed(2)}
+                    {(trade.pnl || 0) >= 0 ? '+' : ''}${(trade.pnl || 0).toFixed(2)}
                   </p>
                 </div>
               </div>

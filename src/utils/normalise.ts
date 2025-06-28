@@ -10,7 +10,7 @@
  */
 export function parseNumber(raw: string | number | null | undefined): number {
   if (raw == null) return NaN;
-  if (typeof raw === 'number') return raw;
+  if (typeof raw === 'number') return isNaN(raw) ? NaN : raw;
   
   const s = String(raw).trim();
   if (!s) return NaN;

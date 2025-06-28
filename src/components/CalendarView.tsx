@@ -32,28 +32,48 @@ const CalendarView = ({ sessions, onSessionClick }: CalendarViewProps) => {
     const grouped: Record<string, TradeSessionWithTrades[]> = {};
     
     sessions.forEach(session => {
-      const dateKey = format(new Date(session.created_at), 'yyyy-MM-dd');
-      if (!grouped[dateKey]) {
-        grouped[dateKey] = [];
+      try {
+        const dateKey = format(new Date(session.created_at), 'yyyy-MM-dd');
+        if (!grouped[dateKey]) {
+          grouped[dateKey] = [];
+        }
+        grouped[dateKey].push(session);
+      } catch (error) {
+        console.warn('Invalid session date:', session.created_at, error);
       }
-      grouped[dateKey].push(session);
     });
     
     return grouped;
   }, [sessions]);
 
   const getDayData = (day: Date) => {
-    const dateKey = format(day, 'yyyy-MM-dd');
-    const daySessions = sessionsByDate[dateKey] || [];
-    
-    const totalPnL = daySessions.reduce((sum, session) => sum + (session.total_pnl || 0), 0);
-    const totalTrades = daySessions.reduce((sum, session) => sum + (session.total_trades || 0), 0);
-    
-    return {
-      sessions: daySessions,
-      totalPnL,
-      totalTrades
-    };
+    try {
+      const dateKey = format(day, 'yyyy-MM-dd');
+      const daySessions = sessionsByDate[dateKey] || [];
+      
+      const totalPnL = daySessions.reduce((sum, session) => {
+        const pnl = Number(session.total_pnl) || 0;
+        return sum + pnl;
+      }, 0);
+      
+      const totalTrades = daySessions.reduce((sum, session) => {
+        const trades = Number(session.total_trades) || 0;
+        return sum + trades;
+      }, 0);
+      
+      return {
+        sessions: daySessions,
+        totalPnL,
+        totalTrades
+      };
+    } catch (error) {
+      console.warn('Error getting day data for:', day, error);
+      return {
+        sessions: [],
+        totalPnL: 0,
+        totalTrades: 0
+      };
+    }
   };
 
   const navigateMonth = (direction: 'prev' | 'next') => {
@@ -160,7 +180,7 @@ const CalendarView = ({ sessions, onSessionClick }: CalendarViewProps) => {
                       <div
                         key={session.id}
                         className={`h-1.5 rounded-full ${
-                          (session.total_pnl || 0) >= 0 ? 'bg-green-400' : 'bg-red-400'
+                          (Number(session.total_pnl) || 0) >= 0 ? 'bg-green-400' : 'bg-red-400'
                         }`}
                       />
                     ))}
@@ -186,9 +206,9 @@ const CalendarView = ({ sessions, onSessionClick }: CalendarViewProps) => {
                       >
                         {format(new Date(session.created_at), 'HH:mm')}
                         <span className={`ml-1 font-semibold ${
-                          (session.total_pnl || 0) >= 0 ? 'text-green-600' : 'text-red-600'
+                          (Number(session.total_pnl) || 0) >= 0 ? 'text-green-600' : 'text-red-600'
                         }`}>
-                          {(session.total_pnl || 0) >= 0 ? '+' : ''}${(session.total_pnl || 0).toFixed(0)}
+                          {(Number(session.total_pnl) || 0) >= 0 ? '+' : ''}${(Number(session.total_pnl) || 0).toFixed(0)}
                         </span>
                       </button>
                     ))}
