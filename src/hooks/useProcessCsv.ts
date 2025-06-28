@@ -17,6 +17,7 @@ interface CsvRow {
 interface ProcessingSummary {
   totalRows: number;
   validTrades: number;
+  mockDataFiltered: number;
   duplicatesSkipped: number;
   parseErrors: number;
   insertedTrades: number;
@@ -262,6 +263,7 @@ export const useProcessCsv = (journal: Journal) => {
     const summary: ProcessingSummary = {
       totalRows: csvData.length,
       validTrades: 0,
+      mockDataFiltered: 0,
       duplicatesSkipped: 0,
       parseErrors: 0,
       insertedTrades: 0,
@@ -271,12 +273,24 @@ export const useProcessCsv = (journal: Journal) => {
 
     const validTrades: Array<TablesInsert<'trades'>> = [];
     const parseErrors: string[] = [];
+    let emptyRowsSkipped = 0;
 
     console.log(`🔄 Processing ${csvData.length} CSV rows...`);
 
     for (let index = 0; index < csvData.length; index++) {
       const row = csvData[index];
       const rowNum = index + 1;
+      
+      // Skip completely empty rows
+      const hasAnyData = Object.values(row).some(val => 
+        val !== null && val !== undefined && val !== ''
+      );
+      
+      if (!hasAnyData) {
+        console.log(`⏭️ Row ${rowNum}: Skipping empty row`);
+        emptyRowsSkipped++;
+        continue;
+      }
       
       try {
         // Extract raw values
@@ -298,7 +312,8 @@ export const useProcessCsv = (journal: Journal) => {
           side: sideRaw,
           qty: qtyRaw,
           price: priceRaw,
-          pnl: pnlRaw
+          pnl: pnlRaw,
+          hasData: hasAnyData
         });
 
         // Parse and validate datetime
@@ -359,9 +374,10 @@ export const useProcessCsv = (journal: Journal) => {
           continue;
         }
 
-        // Skip mock data
+        // Check for mock data and count it
         if (isMockData(trade)) {
-          console.warn(`⚠️ Row ${rowNum}: Skipping mock data`);
+          console.warn(`⚠️ Row ${rowNum}: Skipping mock data for symbol ${symbol}`);
+          summary.mockDataFiltered++;
           continue;
         }
 
@@ -377,13 +393,16 @@ export const useProcessCsv = (journal: Journal) => {
     summary.validTrades = validTrades.length;
     summary.parseErrors = parseErrors.length;
 
-    console.log(`📊 Parsing Summary:`);
-    console.log(`  - Total rows: ${summary.totalRows}`);
-    console.log(`  - Valid trades: ${summary.validTrades}`);
+    console.log(`📊 Detailed Processing Summary:`);
+    console.log(`  - Total CSV rows: ${summary.totalRows}`);
+    console.log(`  - Empty rows skipped: ${emptyRowsSkipped}`);
     console.log(`  - Parse errors: ${summary.parseErrors}`);
+    console.log(`  - Mock data filtered: ${summary.mockDataFiltered}`);
+    console.log(`  - Valid trades: ${summary.validTrades}`);
+    console.log(`  - Accounting: ${summary.totalRows} = ${emptyRowsSkipped} + ${summary.parseErrors} + ${summary.mockDataFiltered} + ${summary.validTrades}`);
 
     if (parseErrors.length > 0) {
-      console.log(`❌ First 10 parse errors:`, parseErrors.slice(0, 10));
+      console.log(`❌ Parse errors details:`, parseErrors.slice(0, 10));
     }
 
     if (validTrades.length === 0) {
@@ -473,8 +492,10 @@ export const useProcessCsv = (journal: Journal) => {
         data: { 
           mapping: headerMapping, 
           totalRows: csvData.length,
+          emptyRowsSkipped,
           validTrades: finalTrades.length,
           parseErrors: parseErrors.length,
+          mockDataFiltered: summary.mockDataFiltered,
           csvDuplicates: summary.duplicatesSkipped,
           databaseDuplicates: databaseDuplicateCount
         }
@@ -612,30 +633,39 @@ export const useProcessCsv = (journal: Journal) => {
       throw new Error(`No new trades were inserted. All ${finalTrades.length} trades appear to be duplicates of existing data in your journal.`);
     }
     
-    // Success notification
-    if (totalDuplicates > 0) {
-      toast({
-        title: '✅ CSV Processing Complete!',
-        description: `Successfully imported ${insertedCount} new trades. Smart duplicate detection skipped ${totalDuplicates} duplicates (${summary.duplicatesSkipped} from file, ${summary.skippedDuplicates} already in database).`,
-      });
-    } else {
-      toast({
-        title: '🎉 Perfect Import!',
-        description: `Successfully imported all ${insertedCount} trades with zero duplicates detected. Your CSV data is perfectly clean!`
-      });
-    }
+    // Enhanced success notification with detailed breakdown
+    const skippedBreakdown = [];
+    if (summary.parseErrors > 0) skippedBreakdown.push(`${summary.parseErrors} parse errors`);
+    if (summary.mockDataFiltered > 0) skippedBreakdown.push(`${summary.mockDataFiltered} mock data`);
+    if (totalDuplicates > 0) skippedBreakdown.push(`${totalDuplicates} duplicates`);
+    if (emptyRowsSkipped > 0) skippedBreakdown.push(`${emptyRowsSkipped} empty rows`);
+    
+    const skippedDetails = skippedBreakdown.length > 0 ? ` (Skipped: ${skippedBreakdown.join(', ')})` : '';
+    
+    toast({
+      title: '✅ CSV Processing Complete!',
+      description: `Successfully imported ${insertedCount} trades from ${summary.totalRows} CSV rows.${skippedDetails}`,
+    });
 
     if (summary.parseErrors > 0) {
       setTimeout(() => {
         toast({
-          title: '⚠️ Some Rows Skipped',
+          title: '⚠️ Some Rows Had Issues',
           description: `${summary.parseErrors} rows had formatting issues and were skipped. Check the browser console for details.`,
           variant: 'default'
         });
       }, 2000);
     }
 
-    console.log(`🎯 Final Summary:`, summary);
+    console.log(`🎯 Final Summary:`, {
+      ...summary,
+      emptyRowsSkipped,
+      finalAccountingCheck: {
+        totalRows: summary.totalRows,
+        processed: emptyRowsSkipped + summary.parseErrors + summary.mockDataFiltered + summary.validTrades,
+        matches: summary.totalRows === (emptyRowsSkipped + summary.parseErrors + summary.mockDataFiltered + summary.validTrades)
+      }
+    });
 
     setLoadingMessage('');
     
