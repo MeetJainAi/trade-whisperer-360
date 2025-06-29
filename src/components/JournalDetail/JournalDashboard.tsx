@@ -45,7 +45,9 @@ const JournalDashboard = ({ journal, sessions, onUploadNew }: JournalDashboardPr
       if (error) throw error;
     },
     onSuccess: () => {
+      // Properly invalidate queries after mutation
       queryClient.invalidateQueries({ queryKey: ['journalWithSessions', journal.id] });
+      queryClient.invalidateQueries({ queryKey: ['journals'] });
       toast({ title: "Success", description: "Trading session deleted successfully." });
       setSessionToDelete(null);
     },

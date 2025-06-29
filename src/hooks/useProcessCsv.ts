@@ -25,6 +25,10 @@ interface ProcessingSummary {
   fileName: string;
 }
 
+interface ColumnMapping {
+  [key: string]: string;
+}
+
 /** Check if data appears to be mock/demo data */
 const isMockData = (trade: any): boolean => {
   const mockSymbols = ['AAPL', 'TSLA', 'GOOG', 'GOOGL', 'META', 'NVDA', 'AMZN', 'MSFT', 'DEMO', 'TEST', 'SAMPLE'];
@@ -101,6 +105,10 @@ const removeCsvDuplicates = (trades: any[]): { unique: any[], duplicates: any[] 
 export const useProcessCsv = (journal: Journal) => {
   const { user } = useAuth();
   const [loadingMessage, setLoadingMessage] = useState('');
+  const [columnMapping, setColumnMapping] = useState<ColumnMapping | null>(null);
+  const [csvData, setCsvData] = useState<CsvRow[] | null>(null);
+  const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
+  const [fileName, setFileName] = useState<string>('');
 
   const processCsv = async (file: File) => {
     if (!user || !journal.id) {
@@ -114,6 +122,7 @@ export const useProcessCsv = (journal: Journal) => {
 
     console.log(`🚀 Processing CSV: ${file.name} (${file.size} bytes)`);
     setLoadingMessage('Reading and parsing CSV file...');
+    setFileName(file.name);
     
     try {
       const text = await file.text();
@@ -137,10 +146,13 @@ export const useProcessCsv = (journal: Journal) => {
             throw new Error('The CSV file appears to be empty or has no valid data rows.');
           }
 
+          setCsvData(results.data);
+          setCsvHeaders(results.meta?.fields || []);
+
           try {
-            await processCSVData(results, file.name);
+            await validateAndMapColumns(results, file.name);
           } catch (error) {
-            console.error('❌ Error in processCSVData:', error);
+            console.error('❌ Error in validateAndMapColumns:', error);
             toast({ 
               title: 'Processing Error', 
               description: (error as Error).message, 
@@ -170,7 +182,7 @@ export const useProcessCsv = (journal: Journal) => {
     }
   };
 
-  const processCSVData = async (results: Papa.ParseResult<CsvRow>, fileName: string) => {
+  const validateAndMapColumns = async (results: Papa.ParseResult<CsvRow>, fileName: string) => {
     const csvHeaders = results.meta?.fields || [];
     const csvData = results.data;
 
@@ -234,25 +246,19 @@ export const useProcessCsv = (journal: Journal) => {
       headerMapping = createFallbackMapping(csvHeaders);
     }
 
+    setColumnMapping(headerMapping);
+    setLoadingMessage('');
+  };
+
+  const processCSVWithMapping = async (finalMapping: ColumnMapping) => {
+    if (!csvData || !user || !journal.id) return;
+
+    setLoadingMessage('Processing trades with confirmed mapping...');
+
     const getVal = (row: CsvRow, key: string): any => {
-      const header = headerMapping[key];
+      const header = finalMapping[key];
       if (header && row[header] !== undefined) {
         return row[header];
-      }
-      // Fallback to common column names
-      const fallbacks: Record<string, string[]> = {
-        datetime: ['Timestamp', 'Time', 'Date', 'DateTime', 'TradeTime', 'Execution Time'],
-        symbol: ['Symbol', 'Ticker', 'Instrument', 'Contract'],
-        side: ['Side', 'Action', 'Type', 'Direction'],
-        qty: ['Qty', 'Quantity', 'Size', 'Amount', 'Volume'],
-        price: ['Price', 'ExecPrice', 'ExecutionPrice', 'FillPrice', 'Exec Price'],
-        pnl: ['PnL', 'P/L', 'Profit', 'NetPnL', 'RealizedPnL', 'Net PnL', 'Realized P&L']
-      };
-      
-      for (const fallback of fallbacks[key] || []) {
-        if (row[fallback] !== undefined) {
-          return row[fallback];
-        }
       }
       return undefined;
     };
@@ -293,7 +299,7 @@ export const useProcessCsv = (journal: Journal) => {
       }
       
       try {
-        // Extract raw values
+        // Extract raw values using confirmed mapping
         const datetimeRaw = getVal(row, 'datetime');
         const symbolRaw = getVal(row, 'symbol');
         const sideRaw = getVal(row, 'side');
@@ -424,63 +430,7 @@ export const useProcessCsv = (journal: Journal) => {
     console.log(`  - After removing CSV duplicates: ${csvUniqueTrades.length}`);
     console.log(`  - CSV duplicates removed: ${csvDuplicates.length}`);
 
-    /* ------------ Step 5: Check database duplicates using SQL function ------------ */
-    setLoadingMessage('Checking database for existing trades...');
-    
-    let finalTrades = csvUniqueTrades;
-    let databaseDuplicateCount = 0;
-
-    if (csvUniqueTrades.length > 0) {
-      try {
-        // Prepare trades data for the SQL function
-        const tradesForCheck = csvUniqueTrades.map(trade => ({
-          datetime: trade.datetime,
-          symbol: trade.symbol,
-          side: trade.side,
-          qty: trade.qty,
-          price: trade.price,
-          pnl: trade.pnl
-        }));
-
-        // Use the database function to check for duplicates
-        const { data: duplicateResults, error: duplicateError } = await supabase
-          .rpc('get_duplicate_trades', {
-            p_journal_id: journal.id,
-            p_trades: tradesForCheck
-          });
-
-        if (!duplicateError && duplicateResults) {
-          console.log(`🔍 Database duplicate check results:`, duplicateResults);
-          
-          // Filter out duplicates
-          finalTrades = csvUniqueTrades.filter((_, index) => {
-            const result = duplicateResults.find(r => r.trade_index === index);
-            const isDuplicate = result?.is_duplicate || false;
-            if (isDuplicate) databaseDuplicateCount++;
-            return !isDuplicate;
-          });
-
-          console.log(`📊 Database Duplicate Summary:`);
-          console.log(`  - Checked trades: ${csvUniqueTrades.length}`);
-          console.log(`  - Database duplicates found: ${databaseDuplicateCount}`);
-          console.log(`  - Final unique trades: ${finalTrades.length}`);
-        } else {
-          console.warn('⚠️ Could not check database duplicates, proceeding with all trades');
-          if (duplicateError) {
-            console.error('Database duplicate check error:', duplicateError);
-          }
-        }
-      } catch (error) {
-        console.warn('⚠️ Database duplicate check failed:', error);
-      }
-    }
-
-    if (finalTrades.length === 0) {
-      const totalDuplicates = summary.duplicatesSkipped + databaseDuplicateCount;
-      throw new Error(`No new trades to import. All ${validTrades.length} trades are duplicates (${summary.duplicatesSkipped} from CSV, ${databaseDuplicateCount} already in database).`);
-    }
-
-    /* ------------ Step 6: Store raw data ------------ */
+    /* ------------ Step 5: Store raw data ------------ */
     setLoadingMessage('Storing raw data...');
     
     const { data: rawData, error: rawError } = await supabase
@@ -490,14 +440,13 @@ export const useProcessCsv = (journal: Journal) => {
         file_name: fileName,
         headers: csvHeaders,
         data: { 
-          mapping: headerMapping, 
+          mapping: finalMapping, 
           totalRows: csvData.length,
           emptyRowsSkipped,
-          validTrades: finalTrades.length,
+          validTrades: csvUniqueTrades.length,
           parseErrors: parseErrors.length,
           mockDataFiltered: summary.mockDataFiltered,
-          csvDuplicates: summary.duplicatesSkipped,
-          databaseDuplicates: databaseDuplicateCount
+          csvDuplicates: summary.duplicatesSkipped
         }
       })
       .select()
@@ -510,11 +459,11 @@ export const useProcessCsv = (journal: Journal) => {
 
     console.log('✅ Raw data stored with ID:', rawData.id);
 
-    /* ------------ Step 7: Calculate preliminary metrics ------------ */
-    const preliminaryMetrics = calculateMetrics(finalTrades as Trade[]);
+    /* ------------ Step 6: Calculate preliminary metrics ------------ */
+    const preliminaryMetrics = calculateMetrics(csvUniqueTrades as Trade[]);
     console.log('📊 Preliminary metrics:', preliminaryMetrics);
 
-    /* ------------ Step 8: Create session ------------ */
+    /* ------------ Step 7: Create session ------------ */
     setLoadingMessage('Creating trade session...');
     
     const { data: newSession, error: sessionError } = await supabase
@@ -535,11 +484,11 @@ export const useProcessCsv = (journal: Journal) => {
 
     console.log('✅ Session created with ID:', newSession.id);
 
-    /* ------------ Step 9: Insert trades ------------ */
-    setLoadingMessage(`Inserting ${finalTrades.length} trades...`);
+    /* ------------ Step 8: Upsert trades (fix for duplicate constraint) ------------ */
+    setLoadingMessage(`Upserting ${csvUniqueTrades.length} trades...`);
     
     // Set session_id for all trades
-    const tradesWithSession = finalTrades.map(trade => ({
+    const tradesWithSession = csvUniqueTrades.map(trade => ({
       ...trade,
       session_id: newSession.id
     }));
@@ -548,36 +497,34 @@ export const useProcessCsv = (journal: Journal) => {
 
     if (tradesWithSession.length > 0) {
       try {
-        // Simple insert - duplicates should already be filtered out
-        const { data: insertedTrades, error: insertError } = await supabase
+        // Use upsert instead of insert to handle duplicates gracefully
+        const { data: upsertedTrades, error: upsertError } = await supabase
           .from('trades')
-          .insert(tradesWithSession)
+          .upsert(tradesWithSession, {
+            onConflict: 'journal_id,datetime,symbol_normalized,side_normalized,qty,price,pnl',
+            ignoreDuplicates: false
+          })
           .select('id');
 
-        if (insertError) {
-          console.error('❌ Batch insert failed:', insertError);
-          // If we still get a constraint error, it means our duplicate detection missed something
-          if (insertError.code === '23505' && insertError.message?.includes('idx_trades_unique_composite')) {
-            throw new Error('Some trades already exist in the database. Our duplicate detection may have missed a few trades due to minor formatting differences. Please try again or check your data for very similar trades.');
-          }
-          throw insertError;
+        if (upsertError) {
+          console.error('❌ Upsert failed:', upsertError);
+          throw upsertError;
         }
 
-        insertedCount = insertedTrades?.length || 0;
+        insertedCount = upsertedTrades?.length || 0;
 
-        console.log(`✅ Batch insert completed:`);
-        console.log(`  - Successfully inserted: ${insertedCount}`);
+        console.log(`✅ Upsert completed:`);
+        console.log(`  - Successfully processed: ${insertedCount}`);
 
       } catch (error) {
-        console.error('❌ Trade insertion failed:', error);
+        console.error('❌ Trade upsert failed:', error);
         throw error;
       }
     }
 
     summary.insertedTrades = insertedCount;
-    summary.skippedDuplicates = databaseDuplicateCount;
 
-    /* ------------ Step 10: Update session with actual metrics ------------ */
+    /* ------------ Step 9: Update session with actual metrics ------------ */
     if (insertedCount > 0) {
       setLoadingMessage('Calculating final metrics...');
       
@@ -606,7 +553,7 @@ export const useProcessCsv = (journal: Journal) => {
       console.log('⚠️ No trades were inserted, session will show zero metrics');
     }
 
-    /* ------------ Step 11: Generate AI insights ------------ */
+    /* ------------ Step 10: Generate AI insights ------------ */
     if (insertedCount > 0) {
       try {
         setLoadingMessage('Generating AI insights...');
@@ -623,28 +570,27 @@ export const useProcessCsv = (journal: Journal) => {
       }
     }
 
-    /* ------------ Step 12: Show comprehensive results ------------ */
-    const totalDuplicates = summary.duplicatesSkipped + summary.skippedDuplicates;
+    /* ------------ Step 11: Show comprehensive results ------------ */
     
     if (insertedCount === 0) {
       // Delete the empty session
       await supabase.from('trade_sessions').delete().eq('id', newSession.id);
       
-      throw new Error(`No new trades were inserted. All ${finalTrades.length} trades appear to be duplicates of existing data in your journal.`);
+      throw new Error(`No new trades were processed. All trades may be duplicates of existing data in your journal.`);
     }
     
     // Enhanced success notification with detailed breakdown
     const skippedBreakdown = [];
     if (summary.parseErrors > 0) skippedBreakdown.push(`${summary.parseErrors} parse errors`);
     if (summary.mockDataFiltered > 0) skippedBreakdown.push(`${summary.mockDataFiltered} mock data`);
-    if (totalDuplicates > 0) skippedBreakdown.push(`${totalDuplicates} duplicates`);
+    if (summary.duplicatesSkipped > 0) skippedBreakdown.push(`${summary.duplicatesSkipped} duplicates`);
     if (emptyRowsSkipped > 0) skippedBreakdown.push(`${emptyRowsSkipped} empty rows`);
     
     const skippedDetails = skippedBreakdown.length > 0 ? ` (Skipped: ${skippedBreakdown.join(', ')})` : '';
     
     toast({
       title: '✅ CSV Processing Complete!',
-      description: `Successfully imported ${insertedCount} trades from ${summary.totalRows} CSV rows.${skippedDetails}`,
+      description: `Successfully processed ${insertedCount} trades from ${summary.totalRows} CSV rows.${skippedDetails}`,
     });
 
     if (summary.parseErrors > 0) {
@@ -668,6 +614,10 @@ export const useProcessCsv = (journal: Journal) => {
     });
 
     setLoadingMessage('');
+    
+    // Clear the mapping state
+    setColumnMapping(null);
+    setCsvData(null);
     
     // Refresh the page to show the new data
     setTimeout(() => {
@@ -703,5 +653,12 @@ export const useProcessCsv = (journal: Journal) => {
     return mapping;
   };
 
-  return { processCsv, loadingMessage };
+  return { 
+    processCsv, 
+    loadingMessage, 
+    columnMapping, 
+    processCSVWithMapping,
+    csvHeaders,
+    csvData 
+  };
 };
