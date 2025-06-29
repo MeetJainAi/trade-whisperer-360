@@ -72,27 +72,44 @@ const validateTradeData = (trade: any, rowIndex: number): { isValid: boolean; er
   return { isValid: errors.length === 0, errors };
 };
 
-/** Remove exact duplicates within the CSV file using a simple composite key */
+/** Remove exact duplicates within the CSV file using adaptive strategy */
 const removeCsvDuplicates = (trades: any[]): { unique: any[], duplicates: any[] } => {
   const seen = new Set<string>();
   const unique: any[] = [];
   const duplicates: any[] = [];
   
   for (const trade of trades) {
-    // Create a simple key for CSV-level duplicate detection
-    const key = [
-      trade.journal_id,
-      trade.datetime,
-      (trade.symbol || '').toString().toUpperCase().trim(),
-      (trade.side || '').toString().toUpperCase().trim(),
-      Number(trade.qty || 0).toString(),
-      Number(trade.price || 0).toString(),
-      Number(trade.pnl || 0).toString()
-    ].join('|');
+    let key: string;
+    
+    // Priority 1: Use fill IDs if both are available (most precise)
+    if (trade.buy_fill_id && trade.sell_fill_id) {
+      key = `fillids:${trade.buy_fill_id}:${trade.sell_fill_id}`;
+      console.log(`🎯 Using fill ID deduplication for trade: ${trade.symbol}`);
+    }
+    // Priority 2: Use individual fill ID if only one is available
+    else if (trade.buy_fill_id || trade.sell_fill_id) {
+      const fillId = trade.buy_fill_id || trade.sell_fill_id;
+      key = `fillid:${fillId}:${trade.datetime}:${trade.symbol}:${trade.side}`;
+      console.log(`🎯 Using single fill ID deduplication for trade: ${trade.symbol}`);
+    }
+    // Priority 3: Fall back to composite key (less strict than before)
+    else {
+      key = [
+        'composite',
+        trade.journal_id,
+        trade.datetime,
+        (trade.symbol || '').toString().toUpperCase().trim(),
+        (trade.side || '').toString().toUpperCase().trim(),
+        Number(trade.qty || 0).toString(),
+        Number(trade.price || 0).toFixed(2), // Allow for small price differences
+        Number(trade.pnl || 0).toFixed(2)    // Allow for small PnL differences
+      ].join('|');
+      console.log(`🔍 Using composite deduplication for trade: ${trade.symbol}`);
+    }
     
     if (seen.has(key)) {
       duplicates.push(trade);
-      console.log(`🔍 CSV Duplicate found:`, trade.symbol, trade.datetime, trade.pnl);
+      console.log(`🔍 CSV Duplicate found using ${key.startsWith('fillid') ? 'fill ID' : 'composite'} key:`, trade.symbol, trade.datetime, trade.pnl);
     } else {
       seen.add(key);
       unique.push(trade);
@@ -311,6 +328,10 @@ export const useProcessCsv = (journal: Journal) => {
         const notesRaw = getVal(row, 'notes') || '';
         const strategyRaw = getVal(row, 'strategy') || '';
         const tagsRaw = getVal(row, 'tags') || '';
+        
+        // Extract fill IDs (new fields)
+        const buyFillIdRaw = getVal(row, 'buyFillId');
+        const sellFillIdRaw = getVal(row, 'sellFillId');
 
         console.log(`📊 Row ${rowNum}:`, {
           datetime: datetimeRaw,
@@ -319,6 +340,8 @@ export const useProcessCsv = (journal: Journal) => {
           qty: qtyRaw,
           price: priceRaw,
           pnl: pnlRaw,
+          buyFillId: buyFillIdRaw,
+          sellFillId: sellFillIdRaw,
           hasData: hasAnyData
         });
 
@@ -356,6 +379,10 @@ export const useProcessCsv = (journal: Journal) => {
           !isNaN(sellPrice) ? sellPrice : undefined
         );
 
+        // Clean fill IDs
+        const buyFillId = buyFillIdRaw ? buyFillIdRaw.toString().trim() : null;
+        const sellFillId = sellFillIdRaw ? sellFillIdRaw.toString().trim() : null;
+
         // Build normalized trade
         const trade = {
           datetime: datetime.toISOString(),
@@ -368,6 +395,8 @@ export const useProcessCsv = (journal: Journal) => {
           strategy: strategyRaw ? strategyRaw.toString().trim() : null,
           tags: parseTags(tagsRaw as string),
           image_url: null,
+          buy_fill_id: buyFillId,
+          sell_fill_id: sellFillId,
           session_id: '', // Will be set later
           user_id: user.id,
           journal_id: journal.id
@@ -388,7 +417,12 @@ export const useProcessCsv = (journal: Journal) => {
         }
 
         validTrades.push(trade);
-        console.log(`✅ Row ${rowNum}: Valid trade`, { symbol, datetime: datetime.toISOString(), pnl });
+        console.log(`✅ Row ${rowNum}: Valid trade`, { 
+          symbol, 
+          datetime: datetime.toISOString(), 
+          pnl,
+          hasFillIds: !!(buyFillId || sellFillId)
+        });
 
       } catch (error) {
         console.error(`❌ Row ${rowNum} parsing error:`, error);
@@ -405,7 +439,7 @@ export const useProcessCsv = (journal: Journal) => {
     console.log(`  - Parse errors: ${summary.parseErrors}`);
     console.log(`  - Mock data filtered: ${summary.mockDataFiltered}`);
     console.log(`  - Valid trades: ${summary.validTrades}`);
-    console.log(`  - Accounting: ${summary.totalRows} = ${emptyRowsSkipped} + ${summary.parseErrors} + ${summary.mockDataFiltered} + ${summary.validTrades}`);
+    console.log(`  - Trades with fill IDs: ${validTrades.filter(t => t.buy_fill_id || t.sell_fill_id).length}`);
 
     if (parseErrors.length > 0) {
       console.log(`❌ Parse errors details:`, parseErrors.slice(0, 10));
@@ -419,18 +453,83 @@ export const useProcessCsv = (journal: Journal) => {
       throw new Error(`No valid trades found in your CSV file.${errorDetails}\n\nPlease ensure your CSV contains proper trading data with columns for date/time, symbol, side (BUY/SELL), quantity, price, and P&L.`);
     }
 
-    /* ------------ Step 4: Remove CSV-level duplicates ------------ */
+    /* ------------ Step 4: Remove CSV-level duplicates (adaptive strategy) ------------ */
     setLoadingMessage('Removing CSV duplicates...');
     
     const { unique: csvUniqueTrades, duplicates: csvDuplicates } = removeCsvDuplicates(validTrades);
     summary.duplicatesSkipped = csvDuplicates.length;
 
-    console.log(`🔄 CSV Duplicate Check:`);
+    console.log(`🔄 CSV Duplicate Check (Adaptive Strategy):`);
     console.log(`  - Original valid trades: ${validTrades.length}`);
     console.log(`  - After removing CSV duplicates: ${csvUniqueTrades.length}`);
     console.log(`  - CSV duplicates removed: ${csvDuplicates.length}`);
 
-    /* ------------ Step 5: Store raw data ------------ */
+    if (csvUniqueTrades.length === 0) {
+      throw new Error(`No new trades to import. All ${validTrades.length} trades are duplicates within the CSV file.`);
+    }
+
+    /* ------------ Step 5: Check database duplicates using flexible approach ------------ */
+    setLoadingMessage('Checking database for existing trades...');
+    
+    let finalTrades = csvUniqueTrades;
+    let databaseDuplicateCount = 0;
+
+    if (csvUniqueTrades.length > 0) {
+      try {
+        // Prepare trades data for the flexible SQL function
+        const tradesForCheck = csvUniqueTrades.map(trade => ({
+          datetime: trade.datetime,
+          symbol: trade.symbol,
+          side: trade.side,
+          qty: trade.qty,
+          price: trade.price,
+          pnl: trade.pnl,
+          buy_fill_id: trade.buy_fill_id,
+          sell_fill_id: trade.sell_fill_id
+        }));
+
+        // Use the new flexible database function
+        const { data: duplicateResults, error: duplicateError } = await supabase
+          .rpc('get_duplicate_trades_flexible', {
+            p_journal_id: journal.id,
+            p_trades: tradesForCheck
+          });
+
+        if (!duplicateError && duplicateResults) {
+          console.log(`🔍 Database duplicate check results:`, duplicateResults);
+          
+          // Filter out duplicates
+          finalTrades = csvUniqueTrades.filter((_, index) => {
+            const result = duplicateResults.find(r => r.trade_index === index);
+            const isDuplicate = result?.is_duplicate || false;
+            if (isDuplicate) {
+              databaseDuplicateCount++;
+              console.log(`📋 Database duplicate found (${result.match_type}):`, csvUniqueTrades[index].symbol, csvUniqueTrades[index].datetime);
+            }
+            return !isDuplicate;
+          });
+
+          console.log(`📊 Database Duplicate Summary:`);
+          console.log(`  - Checked trades: ${csvUniqueTrades.length}`);
+          console.log(`  - Database duplicates found: ${databaseDuplicateCount}`);
+          console.log(`  - Final unique trades: ${finalTrades.length}`);
+        } else {
+          console.warn('⚠️ Could not check database duplicates, proceeding with all trades');
+          if (duplicateError) {
+            console.error('Database duplicate check error:', duplicateError);
+          }
+        }
+      } catch (error) {
+        console.warn('⚠️ Database duplicate check failed:', error);
+      }
+    }
+
+    if (finalTrades.length === 0) {
+      const totalDuplicates = summary.duplicatesSkipped + databaseDuplicateCount;
+      throw new Error(`No new trades to import. All ${validTrades.length} trades are duplicates (${summary.duplicatesSkipped} from CSV, ${databaseDuplicateCount} already in database).`);
+    }
+
+    /* ------------ Step 6: Store raw data ------------ */
     setLoadingMessage('Storing raw data...');
     
     const { data: rawData, error: rawError } = await supabase
@@ -443,10 +542,12 @@ export const useProcessCsv = (journal: Journal) => {
           mapping: finalMapping, 
           totalRows: csvData.length,
           emptyRowsSkipped,
-          validTrades: csvUniqueTrades.length,
+          validTrades: finalTrades.length,
           parseErrors: parseErrors.length,
           mockDataFiltered: summary.mockDataFiltered,
-          csvDuplicates: summary.duplicatesSkipped
+          csvDuplicates: summary.duplicatesSkipped,
+          databaseDuplicates: databaseDuplicateCount,
+          tradesWithFillIds: finalTrades.filter(t => t.buy_fill_id || t.sell_fill_id).length
         }
       })
       .select()
@@ -459,11 +560,11 @@ export const useProcessCsv = (journal: Journal) => {
 
     console.log('✅ Raw data stored with ID:', rawData.id);
 
-    /* ------------ Step 6: Calculate preliminary metrics ------------ */
-    const preliminaryMetrics = calculateMetrics(csvUniqueTrades as Trade[]);
+    /* ------------ Step 7: Calculate preliminary metrics ------------ */
+    const preliminaryMetrics = calculateMetrics(finalTrades as Trade[]);
     console.log('📊 Preliminary metrics:', preliminaryMetrics);
 
-    /* ------------ Step 7: Create session ------------ */
+    /* ------------ Step 8: Create session ------------ */
     setLoadingMessage('Creating trade session...');
     
     const { data: newSession, error: sessionError } = await supabase
@@ -484,11 +585,11 @@ export const useProcessCsv = (journal: Journal) => {
 
     console.log('✅ Session created with ID:', newSession.id);
 
-    /* ------------ Step 8: Upsert trades (fix for duplicate constraint) ------------ */
-    setLoadingMessage(`Upserting ${csvUniqueTrades.length} trades...`);
+    /* ------------ Step 9: Insert trades (changed from upsert to simple insert) ------------ */
+    setLoadingMessage(`Inserting ${finalTrades.length} trades...`);
     
     // Set session_id for all trades
-    const tradesWithSession = csvUniqueTrades.map(trade => ({
+    const tradesWithSession = finalTrades.map(trade => ({
       ...trade,
       session_id: newSession.id
     }));
@@ -497,34 +598,32 @@ export const useProcessCsv = (journal: Journal) => {
 
     if (tradesWithSession.length > 0) {
       try {
-        // Use upsert instead of insert to handle duplicates gracefully
-        const { data: upsertedTrades, error: upsertError } = await supabase
+        // Use simple insert since we've already handled duplicates
+        const { data: insertedTrades, error: insertError } = await supabase
           .from('trades')
-          .upsert(tradesWithSession, {
-            onConflict: 'journal_id,datetime,symbol_normalized,side_normalized,qty,price,pnl',
-            ignoreDuplicates: false
-          })
+          .insert(tradesWithSession)
           .select('id');
 
-        if (upsertError) {
-          console.error('❌ Upsert failed:', upsertError);
-          throw upsertError;
+        if (insertError) {
+          console.error('❌ Insert failed:', insertError);
+          throw insertError;
         }
 
-        insertedCount = upsertedTrades?.length || 0;
+        insertedCount = insertedTrades?.length || 0;
 
-        console.log(`✅ Upsert completed:`);
-        console.log(`  - Successfully processed: ${insertedCount}`);
+        console.log(`✅ Insert completed:`);
+        console.log(`  - Successfully inserted: ${insertedCount}`);
 
       } catch (error) {
-        console.error('❌ Trade upsert failed:', error);
+        console.error('❌ Trade insertion failed:', error);
         throw error;
       }
     }
 
     summary.insertedTrades = insertedCount;
+    summary.skippedDuplicates = databaseDuplicateCount;
 
-    /* ------------ Step 9: Update session with actual metrics ------------ */
+    /* ------------ Step 10: Update session with actual metrics ------------ */
     if (insertedCount > 0) {
       setLoadingMessage('Calculating final metrics...');
       
@@ -553,7 +652,7 @@ export const useProcessCsv = (journal: Journal) => {
       console.log('⚠️ No trades were inserted, session will show zero metrics');
     }
 
-    /* ------------ Step 10: Generate AI insights ------------ */
+    /* ------------ Step 11: Generate AI insights ------------ */
     if (insertedCount > 0) {
       try {
         setLoadingMessage('Generating AI insights...');
@@ -570,27 +669,31 @@ export const useProcessCsv = (journal: Journal) => {
       }
     }
 
-    /* ------------ Step 11: Show comprehensive results ------------ */
+    /* ------------ Step 12: Show comprehensive results ------------ */
+    const totalDuplicates = summary.duplicatesSkipped + summary.skippedDuplicates;
     
     if (insertedCount === 0) {
       // Delete the empty session
       await supabase.from('trade_sessions').delete().eq('id', newSession.id);
       
-      throw new Error(`No new trades were processed. All trades may be duplicates of existing data in your journal.`);
+      throw new Error(`No new trades were inserted. All ${finalTrades.length} trades appear to be duplicates of existing data in your journal.`);
     }
     
     // Enhanced success notification with detailed breakdown
     const skippedBreakdown = [];
     if (summary.parseErrors > 0) skippedBreakdown.push(`${summary.parseErrors} parse errors`);
     if (summary.mockDataFiltered > 0) skippedBreakdown.push(`${summary.mockDataFiltered} mock data`);
-    if (summary.duplicatesSkipped > 0) skippedBreakdown.push(`${summary.duplicatesSkipped} duplicates`);
+    if (totalDuplicates > 0) skippedBreakdown.push(`${totalDuplicates} duplicates`);
     if (emptyRowsSkipped > 0) skippedBreakdown.push(`${emptyRowsSkipped} empty rows`);
     
     const skippedDetails = skippedBreakdown.length > 0 ? ` (Skipped: ${skippedBreakdown.join(', ')})` : '';
+    const fillIdInfo = finalTrades.filter(t => t.buy_fill_id || t.sell_fill_id).length > 0 
+      ? ` Used fill IDs for ${finalTrades.filter(t => t.buy_fill_id || t.sell_fill_id).length} trades for enhanced duplicate detection.` 
+      : '';
     
     toast({
       title: '✅ CSV Processing Complete!',
-      description: `Successfully processed ${insertedCount} trades from ${summary.totalRows} CSV rows.${skippedDetails}`,
+      description: `Successfully imported ${insertedCount} trades from ${summary.totalRows} CSV rows.${skippedDetails}${fillIdInfo}`,
     });
 
     if (summary.parseErrors > 0) {
@@ -625,16 +728,20 @@ export const useProcessCsv = (journal: Journal) => {
     }, 1500);
   };
 
-  // Fallback mapping function
+  // Fallback mapping function (enhanced with fill IDs)
   const createFallbackMapping = (headers: string[]): Record<string, string> => {
     const mapping: Record<string, string> = {};
     
     const patterns = {
-      datetime: /^(date|time|timestamp|datetime|execution|trade.*time)$/i,
+      datetime: /^(date|time|timestamp|datetime|execution|trade.*time|bought.*timestamp|sold.*timestamp)$/i,
       symbol: /^(symbol|ticker|instrument|contract)$/i,
       side: /^(side|action|type|direction|buy.*sell)$/i,
       qty: /^(qty|quantity|size|amount|volume|shares|contracts)$/i,
       price: /^(price|exec.*price|execution.*price|fill.*price|avg.*price)$/i,
+      buyPrice: /^(buy.*price|entry.*price|open.*price)$/i,
+      sellPrice: /^(sell.*price|exit.*price|close.*price)$/i,
+      buyFillId: /^(buy.*fill.*id|buy.*order.*id|entry.*fill.*id|open.*fill.*id)$/i,
+      sellFillId: /^(sell.*fill.*id|sell.*order.*id|exit.*fill.*id|close.*fill.*id)$/i,
       pnl: /^(p.?l|profit|loss|realized|net.*p.?l|pnl)$/i,
       notes: /^(notes|description|comment|memo)$/i,
       strategy: /^(strategy|setup|plan|method)$/i,

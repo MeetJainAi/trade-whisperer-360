@@ -17,6 +17,8 @@ const OPTIONAL_COLUMNS = [
     { id: 'price', label: 'Price' },
     { id: 'buyPrice', label: 'Buy/Entry Price' },
     { id: 'sellPrice', label: 'Sell/Exit Price' },
+    { id: 'buyFillId', label: 'Buy Fill ID (unique identifier for buy execution)' },
+    { id: 'sellFillId', label: 'Sell Fill ID (unique identifier for sell execution)' },
     { id: 'notes', label: 'Notes' },
     { id: 'strategy', label: 'Strategy' },
     { id: 'tags', label: 'Tags (comma-separated)' },
@@ -54,13 +56,15 @@ OPTIONAL attributes (map them if you find a match):
 ${OPTIONAL_COLUMNS.map(c => `- ${c.id} (${c.label})`).join('\n')}
 
 IMPORTANT MAPPING HINTS:
-- 'datetime': Timestamp of the trade. Look for 'Date', 'Time', 'Execution Time', 'Timestamp', 'DateTime', 'TradeTime'.
+- 'datetime': Timestamp of the trade. Look for 'Date', 'Time', 'Execution Time', 'Timestamp', 'DateTime', 'TradeTime', 'boughtTimestamp', 'soldTimestamp'.
 - 'symbol': Stock ticker or instrument. Look for 'Symbol', 'Ticker', 'Instrument', 'Contract', 'Security'.
 - 'side': BUY/SELL direction. Look for 'Side', 'Action', 'Type', 'Direction', 'TradeType', 'Position'. May contain 'buy'/'sell', 'long'/'short', 'L'/'S', 'B'/'SL', 'Open'/'Close', 'IN'/'OUT', '1'/'-1'.
 - 'qty': Trade quantity. Look for 'Qty', 'Quantity', 'Size', 'Amount', 'Volume', 'Shares', 'Contracts'.
 - 'price': Execution price. Look for 'Price', 'Exec Price', 'Execution Price', 'Fill Price', 'Average Price'.
-- 'buyPrice': Entry/buy price. Look for 'Buy Price', 'Entry Price', 'Open Price'.
-- 'sellPrice': Exit/sell price. Look for 'Sell Price', 'Exit Price', 'Close Price'.
+- 'buyPrice': Entry/buy price. Look for 'Buy Price', 'Entry Price', 'Open Price', 'buyPrice'.
+- 'sellPrice': Exit/sell price. Look for 'Sell Price', 'Exit Price', 'Close Price', 'sellPrice'.
+- 'buyFillId': Unique identifier for buy execution. Look for 'Buy Fill ID', 'buyFillId', 'Entry Fill ID', 'Open Fill ID', 'Buy Order ID'.
+- 'sellFillId': Unique identifier for sell execution. Look for 'Sell Fill ID', 'sellFillId', 'Exit Fill ID', 'Close Fill ID', 'Sell Order ID'.
 - 'pnl': Profit and Loss. Look for 'P&L', 'P/L', 'Profit', 'Loss', 'Realized P&L', 'Net PnL', 'Net Profit/Loss', 'PnL', 'Unrealized PnL'.
 
 BROKER-SPECIFIC VARIATIONS TO CONSIDER:
@@ -68,6 +72,8 @@ BROKER-SPECIFIC VARIATIONS TO CONSIDER:
 - Side might be encoded as numbers (1=buy, -1=sell) or letters (L=long, S=short)
 - Quantity might be signed (positive=buy, negative=sell)
 - PnL formatting varies greatly between brokers
+- Fill IDs are crucial for distinguishing between separate executions that might look identical otherwise
+- Fill IDs might be named differently: 'FillId', 'OrderId', 'ExecutionId', 'TradeId', etc.
 
 Your response MUST be a valid JSON object only, with no other text, comments, or explanations.
 The keys must be the target attribute 'id's (e.g., "datetime", "symbol").
@@ -85,6 +91,8 @@ Example response format:
   "price": "Exec Price",
   "buyPrice": "Entry Price",
   "sellPrice": "Exit Price",
+  "buyFillId": "buyFillId",
+  "sellFillId": "sellFillId",
   "pnl": "Realized P&L",
   "notes": "Description"
 }

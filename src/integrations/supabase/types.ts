@@ -173,6 +173,7 @@ export type Database = {
       }
       trades: {
         Row: {
+          buy_fill_id: string | null
           created_at: string
           datetime: string
           id: string
@@ -182,6 +183,7 @@ export type Database = {
           pnl: number | null
           price: number | null
           qty: number | null
+          sell_fill_id: string | null
           session_id: string
           side: string | null
           strategy: string | null
@@ -190,6 +192,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          buy_fill_id?: string | null
           created_at?: string
           datetime: string
           id?: string
@@ -199,6 +202,7 @@ export type Database = {
           pnl?: number | null
           price?: number | null
           qty?: number | null
+          sell_fill_id?: string | null
           session_id: string
           side?: string | null
           strategy?: string | null
@@ -207,6 +211,7 @@ export type Database = {
           user_id: string
         }
         Update: {
+          buy_fill_id?: string | null
           created_at?: string
           datetime?: string
           id?: string
@@ -216,6 +221,7 @@ export type Database = {
           pnl?: number | null
           price?: number | null
           qty?: number | null
+          sell_fill_id?: string | null
           session_id?: string
           side?: string | null
           strategy?: string | null

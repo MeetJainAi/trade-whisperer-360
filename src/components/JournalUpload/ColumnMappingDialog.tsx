@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { AlertCircle, CheckCircle, Info } from 'lucide-react';
+import { AlertCircle, CheckCircle, Info, Zap } from 'lucide-react';
 
 interface ColumnMapping {
   [key: string]: string;
@@ -31,6 +31,8 @@ const OPTIONAL_FIELDS = [
   { key: 'price', label: 'Price', description: 'Execution price' },
   { key: 'buyPrice', label: 'Buy Price', description: 'Entry/Buy price' },
   { key: 'sellPrice', label: 'Sell Price', description: 'Exit/Sell price' },
+  { key: 'buyFillId', label: 'Buy Fill ID', description: 'Unique identifier for buy execution (helps prevent duplicates)' },
+  { key: 'sellFillId', label: 'Sell Fill ID', description: 'Unique identifier for sell execution (helps prevent duplicates)' },
   { key: 'notes', label: 'Notes', description: 'Trade notes or comments' },
   { key: 'strategy', label: 'Strategy', description: 'Trading strategy used' },
   { key: 'tags', label: 'Tags', description: 'Trade categories or labels' }
@@ -116,6 +118,11 @@ const ColumnMappingDialog = ({
     return mapped ? 'success' : 'optional';
   };
 
+  const hasFillIds = () => {
+    return (mapping['buyFillId'] && mapping['buyFillId'] !== '') || 
+           (mapping['sellFillId'] && mapping['sellFillId'] !== '');
+  };
+
   const missingRequired = getMissingRequiredFields();
   const canProcess = isValid();
 
@@ -130,6 +137,16 @@ const ColumnMappingDialog = ({
           <p className="text-sm text-slate-600">
             Review and adjust how your CSV columns map to our trade fields. Required fields must be mapped.
           </p>
+          {hasFillIds() && (
+            <div className="mt-2 p-3 bg-green-50 border border-green-200 rounded-lg">
+              <div className="flex items-center gap-2">
+                <Zap className="w-4 h-4 text-green-600" />
+                <p className="text-sm text-green-800 font-medium">
+                  Excellent! Fill IDs detected - this will provide more accurate duplicate detection.
+                </p>
+              </div>
+            </div>
+          )}
           {missingRequired.length > 0 && (
             <div className="mt-2 p-3 bg-red-50 border border-red-200 rounded-lg">
               <p className="text-sm text-red-800 font-medium">
@@ -207,16 +224,24 @@ const ColumnMappingDialog = ({
               {OPTIONAL_FIELDS.map((field) => {
                 const status = getFieldStatus(field.key, false);
                 const isMapped = mapping[field.key] && mapping[field.key] !== '';
+                const isFillId = field.key.includes('FillId');
                 
                 return (
-                  <div key={field.key} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center p-3 border rounded-lg">
+                  <div key={field.key} className={`grid grid-cols-1 md:grid-cols-3 gap-4 items-center p-3 border rounded-lg ${
+                    isMapped && isFillId ? 'border-green-200 bg-green-50' : ''
+                  }`}>
                     <div>
                       <div className="flex items-center gap-2">
                         <Label className="font-medium">{field.label}</Label>
                         {status === 'success' && (
                           <CheckCircle className="w-4 h-4 text-green-500" />
                         )}
-                        <Badge variant="outline" className="text-xs">Optional</Badge>
+                        {isFillId && isMapped && (
+                          <Zap className="w-4 h-4 text-green-600" />
+                        )}
+                        <Badge variant={isFillId && isMapped ? 'default' : 'outline'} className="text-xs">
+                          {isFillId ? 'Anti-Duplicate' : 'Optional'}
+                        </Badge>
                       </div>
                       <p className="text-xs text-slate-600">{field.description}</p>
                     </div>
