@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { toast } from '@/components/ui/use-toast';
 import { Tables } from '@/integrations/supabase/types';
-import { ArrowLeft, Save, Calendar, DollarSign, TrendingUp, TrendingDown, Brain, Target, AlertCircle, CheckCircle, Image, PlusCircle, Link2, FileText, Lightbulb } from 'lucide-react';
+import { ArrowLeft, Save, Calendar, DollarSign, TrendingUp, TrendingDown, Brain, Target, AlertCircle, CheckCircle, Image, PlusCircle, Link2, FileText, Lightbulb, Star, Plus, X, Settings } from 'lucide-react';
 import { format } from 'date-fns';
 
 const TradeNotes = () => {
@@ -29,6 +29,18 @@ const TradeNotes = () => {
   const [imageUrl, setImageUrl] = useState('');
   const [customFields, setCustomFields] = useState<{[key: string]: string}>({});
   const [newFieldName, setNewFieldName] = useState('');
+  const [savedOptions, setSavedOptions] = useState<{[key: string]: string[]}>({
+    reasoning: [],
+    emotions: [],
+    lessons: [],
+    mistakes: []
+  });
+  const [newCustomOption, setNewCustomOption] = useState<{[key: string]: string}>({
+    reasoning: '',
+    emotions: '',
+    lessons: '',
+    mistakes: ''
+  });
   const [showAiSuggestions, setShowAiSuggestions] = useState(false);
 
   const { data: trade, isLoading, error } = useQuery<Tables<'trades'>>({
@@ -90,6 +102,11 @@ const TradeNotes = () => {
             if (detailedNotes.customFields) {
               setCustomFields(detailedNotes.customFields);
             }
+            
+            // Load saved custom options if they exist
+            if (detailedNotes.savedOptions) {
+              setSavedOptions(detailedNotes.savedOptions);
+            }
           } else {
             // If notes is not JSON, keep it as simple notes
             setReasoning(trade.notes);
@@ -109,8 +126,9 @@ const TradeNotes = () => {
       reasoning,
       emotions,
       lessons,
-      mistakes, 
+      mistakes,
       customFields,
+      savedOptions,
       lastUpdated: new Date().toISOString()
     };
 
@@ -154,6 +172,91 @@ const TradeNotes = () => {
     const newCustomFields = {...customFields};
     delete newCustomFields[key];
     setCustomFields(newCustomFields);
+  };
+
+  // Load saved options from localStorage on component mount
+  useEffect(() => {
+    try {
+      const savedOptionsFromStorage = localStorage.getItem('traderInsight_savedOptions');
+      if (savedOptionsFromStorage) {
+        const parsedOptions = JSON.parse(savedOptionsFromStorage);
+        setSavedOptions(prevOptions => ({
+          ...prevOptions,
+          ...parsedOptions
+        }));
+      }
+    } catch (error) {
+      console.error('Error loading saved options:', error);
+    }
+  }, []);
+
+  // Save custom option to both state and localStorage
+  const saveCustomOption = (field: string) => {
+    if (!newCustomOption[field] || newCustomOption[field].trim() === '') return;
+    
+    const option = newCustomOption[field].trim();
+    
+    // Update state
+    const updatedOptions = {
+      ...savedOptions,
+      [field]: [...(savedOptions[field] || []), option]
+    };
+    
+    setSavedOptions(updatedOptions);
+    
+    // Reset input
+    setNewCustomOption({
+      ...newCustomOption,
+      [field]: ''
+    });
+    
+    // Save to localStorage
+    try {
+      localStorage.setItem('traderInsight_savedOptions', JSON.stringify(updatedOptions));
+    } catch (error) {
+      console.error('Error saving options to localStorage:', error);
+    }
+    
+    toast({
+      title: "Custom option saved",
+      description: `"${option}" added to your quick options.`,
+    });
+  };
+
+  // Remove a saved custom option
+  const removeCustomOption = (field: string, option: string) => {
+    const updatedOptions = {
+      ...savedOptions,
+      [field]: savedOptions[field].filter(item => item !== option)
+    };
+    
+    setSavedOptions(updatedOptions);
+    
+    // Update localStorage
+    try {
+      localStorage.setItem('traderInsight_savedOptions', JSON.stringify(updatedOptions));
+    } catch (error) {
+      console.error('Error saving options to localStorage:', error);
+    }
+  };
+
+  // Add option text to the corresponding field
+  const addOptionToField = (field: string, option: string) => {
+    const setterFunctions = {
+      reasoning: setReasoning,
+      emotions: setEmotions,
+      lessons: setLessons,
+      mistakes: setMistakes
+    };
+    
+    const currentValue = {
+      reasoning,
+      emotions,
+      lessons,
+      mistakes
+    }[field];
+    
+    setterFunctions[field](currentValue ? `${currentValue}\n• ${option}` : `• ${option}`);
   };
 
   // Predefined tags for quick selection
@@ -552,16 +655,75 @@ const TradeNotes = () => {
               <div className="mb-4">
                 <label className="block text-sm font-medium text-slate-700 mb-2">Quick Options</label>
                 <div className="flex flex-wrap gap-2 mb-4">
-                  {predefinedOptions.reasoning.map((option, index) => (
+                  {/* System predefined options */}
+                  <div className="w-full mb-2">
+                    <h5 className="text-xs font-medium text-slate-500 mb-1 flex items-center">
+                      <Settings className="w-3 h-3 mr-1" /> System Options
+                    </h5>
+                    <div className="flex flex-wrap gap-2">
+                      {predefinedOptions.reasoning.map((option, index) => (
+                        <Badge 
+                          key={index}
+                          variant="outline"
+                          className="cursor-pointer hover:bg-blue-50"
+                          onClick={() => addOptionToField('reasoning', option)}
+                        >
+                          + {option}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                  
+                  {/* User's custom saved options */}
+                  {savedOptions.reasoning && savedOptions.reasoning.length > 0 && (
+                    <div className="w-full">
+                      <h5 className="text-xs font-medium text-slate-500 mb-1 flex items-center">
+                        <Star className="w-3 h-3 mr-1 text-amber-500" /> My Saved Options
+                      </h5>
+                      <div className="flex flex-wrap gap-2">
+                        {savedOptions.reasoning.map((option, index) => (
+                          <div key={index} className="flex items-center">
+                            <Badge 
+                              variant="default"
+                              className="cursor-pointer bg-amber-100 text-amber-800 hover:bg-amber-200"
+                              onClick={() => addOptionToField('reasoning', option)}
+                            >
+                              + {option}
+                            </Badge>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-5 w-5 p-0 ml-1 text-slate-400 hover:text-red-500"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removeCustomOption('reasoning', option);
+                              }}
+                            >
+                              <X className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Add new custom option */}
+                  <div className="w-full mt-2 flex items-center space-x-2">
+                    <Input
+                      value={newCustomOption.reasoning}
+                      onChange={(e) => setNewCustomOption({...newCustomOption, reasoning: e.target.value})}
+                      placeholder="Add your own custom option..."
+                      className="flex-1"
+                      onKeyPress={(e) => e.key === 'Enter' && saveCustomOption('reasoning')}
+                    />
                     <Badge 
-                      key={index}
-                      variant="outline"
-                      className="cursor-pointer hover:bg-blue-50"
-                      onClick={() => setReasoning(reasoning ? `${reasoning}\n• ${option}` : `• ${option}`)}
+                      variant="default"
+                      className="cursor-pointer bg-blue-600 hover:bg-blue-700"
+                      onClick={() => saveCustomOption('reasoning')}
                     >
-                      + {option}
+                      <Plus className="w-3 h-3 mr-1" /> Save
                     </Badge>
-                  ))}
+                  </div>
                 </div>
               </div>
               
@@ -609,16 +771,75 @@ const TradeNotes = () => {
               <div className="mb-4">
                 <label className="block text-sm font-medium text-slate-700 mb-2">Quick Options</label>
                 <div className="flex flex-wrap gap-2 mb-4">
-                  {predefinedOptions.emotions.map((option, index) => (
+                  {/* System predefined options */}
+                  <div className="w-full mb-2">
+                    <h5 className="text-xs font-medium text-slate-500 mb-1 flex items-center">
+                      <Settings className="w-3 h-3 mr-1" /> System Options
+                    </h5>
+                    <div className="flex flex-wrap gap-2">
+                      {predefinedOptions.emotions.map((option, index) => (
+                        <Badge 
+                          key={index}
+                          variant="outline"
+                          className="cursor-pointer hover:bg-purple-50"
+                          onClick={() => addOptionToField('emotions', option)}
+                        >
+                          + {option}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                  
+                  {/* User's custom saved options */}
+                  {savedOptions.emotions && savedOptions.emotions.length > 0 && (
+                    <div className="w-full">
+                      <h5 className="text-xs font-medium text-slate-500 mb-1 flex items-center">
+                        <Star className="w-3 h-3 mr-1 text-amber-500" /> My Saved Options
+                      </h5>
+                      <div className="flex flex-wrap gap-2">
+                        {savedOptions.emotions.map((option, index) => (
+                          <div key={index} className="flex items-center">
+                            <Badge 
+                              variant="default"
+                              className="cursor-pointer bg-amber-100 text-amber-800 hover:bg-amber-200"
+                              onClick={() => addOptionToField('emotions', option)}
+                            >
+                              + {option}
+                            </Badge>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-5 w-5 p-0 ml-1 text-slate-400 hover:text-red-500"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removeCustomOption('emotions', option);
+                              }}
+                            >
+                              <X className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Add new custom option */}
+                  <div className="w-full mt-2 flex items-center space-x-2">
+                    <Input
+                      value={newCustomOption.emotions}
+                      onChange={(e) => setNewCustomOption({...newCustomOption, emotions: e.target.value})}
+                      placeholder="Add your own custom option..."
+                      className="flex-1"
+                      onKeyPress={(e) => e.key === 'Enter' && saveCustomOption('emotions')}
+                    />
                     <Badge 
-                      key={index}
-                      variant="outline"
-                      className="cursor-pointer hover:bg-purple-50"
-                      onClick={() => setEmotions(emotions ? `${emotions}\n• ${option}` : `• ${option}`)}
+                      variant="default"
+                      className="cursor-pointer bg-purple-600 hover:bg-purple-700"
+                      onClick={() => saveCustomOption('emotions')}
                     >
-                      + {option}
+                      <Plus className="w-3 h-3 mr-1" /> Save
                     </Badge>
-                  ))}
+                  </div>
                 </div>
               </div>
               
@@ -667,16 +888,75 @@ const TradeNotes = () => {
               <div className="mb-4">
                 <label className="block text-sm font-medium text-slate-700 mb-2">Quick Options</label>
                 <div className="flex flex-wrap gap-2 mb-4">
-                  {predefinedOptions.lessons.map((option, index) => (
+                  {/* System predefined options */}
+                  <div className="w-full mb-2">
+                    <h5 className="text-xs font-medium text-slate-500 mb-1 flex items-center">
+                      <Settings className="w-3 h-3 mr-1" /> System Options
+                    </h5>
+                    <div className="flex flex-wrap gap-2">
+                      {predefinedOptions.lessons.map((option, index) => (
+                        <Badge 
+                          key={index}
+                          variant="outline"
+                          className="cursor-pointer hover:bg-green-50"
+                          onClick={() => addOptionToField('lessons', option)}
+                        >
+                          + {option}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                  
+                  {/* User's custom saved options */}
+                  {savedOptions.lessons && savedOptions.lessons.length > 0 && (
+                    <div className="w-full">
+                      <h5 className="text-xs font-medium text-slate-500 mb-1 flex items-center">
+                        <Star className="w-3 h-3 mr-1 text-amber-500" /> My Saved Options
+                      </h5>
+                      <div className="flex flex-wrap gap-2">
+                        {savedOptions.lessons.map((option, index) => (
+                          <div key={index} className="flex items-center">
+                            <Badge 
+                              variant="default"
+                              className="cursor-pointer bg-amber-100 text-amber-800 hover:bg-amber-200"
+                              onClick={() => addOptionToField('lessons', option)}
+                            >
+                              + {option}
+                            </Badge>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-5 w-5 p-0 ml-1 text-slate-400 hover:text-red-500"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removeCustomOption('lessons', option);
+                              }}
+                            >
+                              <X className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Add new custom option */}
+                  <div className="w-full mt-2 flex items-center space-x-2">
+                    <Input
+                      value={newCustomOption.lessons}
+                      onChange={(e) => setNewCustomOption({...newCustomOption, lessons: e.target.value})}
+                      placeholder="Add your own custom option..."
+                      className="flex-1"
+                      onKeyPress={(e) => e.key === 'Enter' && saveCustomOption('lessons')}
+                    />
                     <Badge 
-                      key={index}
-                      variant="outline"
-                      className="cursor-pointer hover:bg-green-50"
-                      onClick={() => setLessons(lessons ? `${lessons}\n• ${option}` : `• ${option}`)}
+                      variant="default"
+                      className="cursor-pointer bg-green-600 hover:bg-green-700"
+                      onClick={() => saveCustomOption('lessons')}
                     >
-                      + {option}
+                      <Plus className="w-3 h-3 mr-1" /> Save
                     </Badge>
-                  ))}
+                  </div>
                 </div>
               </div>
               
@@ -724,16 +1004,75 @@ const TradeNotes = () => {
               <div className="mb-4">
                 <label className="block text-sm font-medium text-slate-700 mb-2">Quick Options</label>
                 <div className="flex flex-wrap gap-2 mb-4">
-                  {predefinedOptions.mistakes.map((option, index) => (
+                  {/* System predefined options */}
+                  <div className="w-full mb-2">
+                    <h5 className="text-xs font-medium text-slate-500 mb-1 flex items-center">
+                      <Settings className="w-3 h-3 mr-1" /> System Options
+                    </h5>
+                    <div className="flex flex-wrap gap-2">
+                      {predefinedOptions.mistakes.map((option, index) => (
+                        <Badge 
+                          key={index}
+                          variant="outline"
+                          className="cursor-pointer hover:bg-red-50"
+                          onClick={() => addOptionToField('mistakes', option)}
+                        >
+                          + {option}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                  
+                  {/* User's custom saved options */}
+                  {savedOptions.mistakes && savedOptions.mistakes.length > 0 && (
+                    <div className="w-full">
+                      <h5 className="text-xs font-medium text-slate-500 mb-1 flex items-center">
+                        <Star className="w-3 h-3 mr-1 text-amber-500" /> My Saved Options
+                      </h5>
+                      <div className="flex flex-wrap gap-2">
+                        {savedOptions.mistakes.map((option, index) => (
+                          <div key={index} className="flex items-center">
+                            <Badge 
+                              variant="default"
+                              className="cursor-pointer bg-amber-100 text-amber-800 hover:bg-amber-200"
+                              onClick={() => addOptionToField('mistakes', option)}
+                            >
+                              + {option}
+                            </Badge>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-5 w-5 p-0 ml-1 text-slate-400 hover:text-red-500"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removeCustomOption('mistakes', option);
+                              }}
+                            >
+                              <X className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Add new custom option */}
+                  <div className="w-full mt-2 flex items-center space-x-2">
+                    <Input
+                      value={newCustomOption.mistakes}
+                      onChange={(e) => setNewCustomOption({...newCustomOption, mistakes: e.target.value})}
+                      placeholder="Add your own custom option..."
+                      className="flex-1"
+                      onKeyPress={(e) => e.key === 'Enter' && saveCustomOption('mistakes')}
+                    />
                     <Badge 
-                      key={index}
-                      variant="outline"
-                      className="cursor-pointer hover:bg-red-50"
-                      onClick={() => setMistakes(mistakes ? `${mistakes}\n• ${option}` : `• ${option}`)}
+                      variant="default"
+                      className="cursor-pointer bg-red-600 hover:bg-red-700"
+                      onClick={() => saveCustomOption('mistakes')}
                     >
-                      + {option}
+                      <Plus className="w-3 h-3 mr-1" /> Save
                     </Badge>
-                  ))}
+                  </div>
                 </div>
               </div>
               
@@ -827,6 +1166,9 @@ const TradeNotes = () => {
             <Save className="w-5 h-5 mr-2" />
             {updateTradeMutation.isPending ? 'Saving Analysis...' : 'Save Complete Analysis'}
           </Button>
+          <p className="text-xs text-slate-500 mt-2">
+            Your custom quick options are saved automatically and will be available for all trades
+          </p>
         </div>
       </div>
     </div>
