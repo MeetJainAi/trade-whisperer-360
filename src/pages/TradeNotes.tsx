@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { toast } from '@/components/ui/use-toast';
 import { Tables } from '@/integrations/supabase/types';
-import { ArrowLeft, Save, Calendar, DollarSign, TrendingUp, TrendingDown, Brain, Target, AlertCircle, CheckCircle } from 'lucide-react';
+import { ArrowLeft, Save, Calendar, DollarSign, TrendingUp, TrendingDown, Brain, Target, AlertCircle, CheckCircle, Image, PlusCircle, Link2, FileText, Lightbulb } from 'lucide-react';
 import { format } from 'date-fns';
 
 const TradeNotes = () => {
@@ -25,7 +25,11 @@ const TradeNotes = () => {
   const [reasoning, setReasoning] = useState('');
   const [emotions, setEmotions] = useState('');
   const [lessons, setLessons] = useState('');
-  const [mistakes, setMistakes] = useState('');
+  const [mistakes, setMistakes] = useState(''); 
+  const [imageUrl, setImageUrl] = useState('');
+  const [customFields, setCustomFields] = useState<{[key: string]: string}>({});
+  const [newFieldName, setNewFieldName] = useState('');
+  const [showAiSuggestions, setShowAiSuggestions] = useState(false);
 
   const { data: trade, isLoading, error } = useQuery<Tables<'trades'>>({
     queryKey: ['trade', tradeId],
@@ -70,6 +74,7 @@ const TradeNotes = () => {
     if (trade) {
       setStrategy((trade as any).strategy || '');
       setTags((trade as any).tags || []);
+      setImageUrl(trade.image_url || '');
       
       // Parse detailed notes if they exist
       try {
@@ -79,7 +84,12 @@ const TradeNotes = () => {
             setReasoning(detailedNotes.reasoning || '');
             setEmotions(detailedNotes.emotions || '');
             setLessons(detailedNotes.lessons || '');
-            setMistakes(detailedNotes.mistakes || '');
+            setMistakes(detailedNotes.mistakes || ''); 
+            
+            // Load custom fields if they exist
+            if (detailedNotes.customFields) {
+              setCustomFields(detailedNotes.customFields);
+            }
           } else {
             // If notes is not JSON, keep it as simple notes
             setReasoning(trade.notes);
@@ -99,14 +109,16 @@ const TradeNotes = () => {
       reasoning,
       emotions,
       lessons,
-      mistakes,
+      mistakes, 
+      customFields,
       lastUpdated: new Date().toISOString()
     };
 
     updateTradeMutation.mutate({
       notes: JSON.stringify(detailedNotes),
       strategy,
-      tags,
+      tags, 
+      image_url: imageUrl
     } as any);
   };
 
@@ -119,6 +131,29 @@ const TradeNotes = () => {
 
   const removeTag = (tagToRemove: string) => {
     setTags(tags.filter(tag => tag !== tagToRemove));
+  };
+
+  const addCustomField = () => {
+    if (newFieldName.trim() && !customFields[newFieldName.trim()]) {
+      setCustomFields({
+        ...customFields,
+        [newFieldName.trim()]: ''
+      });
+      setNewFieldName('');
+    }
+  };
+
+  const updateCustomField = (key: string, value: string) => {
+    setCustomFields({
+      ...customFields,
+      [key]: value
+    });
+  };
+
+  const removeCustomField = (key: string) => {
+    const newCustomFields = {...customFields};
+    delete newCustomFields[key];
+    setCustomFields(newCustomFields);
   };
 
   // Predefined tags for quick selection
@@ -136,6 +171,67 @@ const TradeNotes = () => {
       setTags([...tags, tag]);
     }
   };
+
+  // Predefined options for each field
+  const predefinedOptions = {
+    reasoning: [
+      'Breakout above resistance',
+      'Support bounce',
+      'Trend continuation',
+      'Reversal pattern',
+      'Gap fill',
+      'News catalyst',
+      'Earnings reaction',
+      'Technical pattern',
+      'Volume spike',
+      'Momentum play'
+    ],
+    emotions: [
+      'Confident and calm',
+      'Anxious about entry',
+      'FOMO-driven',
+      'Revenge trading after loss',
+      'Hesitant to take profit',
+      'Fearful of loss',
+      'Excited and impulsive',
+      'Disciplined and patient',
+      'Frustrated with market',
+      'Overconfident after wins'
+    ],
+    lessons: [
+      'Patience pays off',
+      'Stick to the plan',
+      'Trust your analysis',
+      'Size appropriately',
+      'Cut losses quickly',
+      'Let winners run',
+      'Avoid trading news',
+      'Wait for confirmation',
+      'Focus on high probability setups',
+      'Manage risk first'
+    ],
+    mistakes: [
+      'Entered too early',
+      'Exited too soon',
+      'Position size too large',
+      'Ignored stop loss',
+      'Chased price',
+      'Averaged down on loser',
+      'Traded without a plan',
+      'Emotional decision making',
+      'Ignored market conditions',
+      'Overtraded'
+    ]
+  };
+
+  // AI suggestions (simulated)
+  const aiSuggestions = {
+    reasoning: "Based on your trading history with similar setups, you might want to consider mentioning the specific technical pattern you identified and the key levels that influenced your decision.",
+    emotions: "Your past trades show a pattern of hesitation when taking profits. Consider reflecting on whether you felt any anxiety about closing this position too early.",
+    lessons: "Your most profitable trades typically involve patient entries. Did this trade reinforce that pattern or challenge it?",
+    mistakes: "Looking at your trading history, you often enter positions too early. Did you wait for confirmation on this trade or jump in prematurely?"
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-screen">
@@ -379,6 +475,50 @@ const TradeNotes = () => {
               </div>
             </CardContent>
           </Card>
+
+          {/* TradingView Screenshot */}
+          <Card className="border-0 shadow-lg">
+            <CardHeader>
+              <CardTitle className="flex items-center space-x-2">
+                <Image className="w-5 h-5 text-blue-600" />
+                <span>TradingView Screenshot</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Image URL</label>
+                  <div className="flex space-x-2">
+                    <Input
+                      value={imageUrl}
+                      onChange={(e) => setImageUrl(e.target.value)}
+                      placeholder="Paste TradingView screenshot URL here"
+                    />
+                  </div>
+                </div>
+                
+                {imageUrl && (
+                  <div className="border rounded-lg overflow-hidden">
+                    <img 
+                      src={imageUrl} 
+                      alt="Trade Screenshot" 
+                      className="w-full h-auto"
+                      onError={(e) => {
+                        e.currentTarget.src = 'https://via.placeholder.com/800x400?text=Invalid+Image+URL';
+                      }}
+                    />
+                  </div>
+                )}
+                
+                <div className="text-sm text-slate-600">
+                  <p className="flex items-center">
+                    <Link2 className="w-4 h-4 mr-1" />
+                    Tip: Take a screenshot in TradingView, click "Save Image", then copy the URL
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         </div>
 
         {/* Detailed Analysis */}
@@ -388,9 +528,43 @@ const TradeNotes = () => {
               <CardTitle className="flex items-center space-x-2">
                 <Target className="w-5 h-5 text-blue-600" />
                 <span>Trade Reasoning</span>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="ml-auto text-xs"
+                  onClick={() => setShowAiSuggestions(!showAiSuggestions)}
+                >
+                  <Lightbulb className="w-3 h-3 mr-1" />
+                  AI Help
+                </Button>
               </CardTitle>
             </CardHeader>
             <CardContent>
+              {showAiSuggestions && (
+                <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200 text-sm text-blue-800">
+                  <div className="flex items-start">
+                    <Lightbulb className="w-4 h-4 text-blue-600 mt-0.5 mr-2 flex-shrink-0" />
+                    <p>{aiSuggestions.reasoning}</p>
+                  </div>
+                </div>
+              )}
+              
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-slate-700 mb-2">Quick Options</label>
+                <div className="flex flex-wrap gap-2 mb-4">
+                  {predefinedOptions.reasoning.map((option, index) => (
+                    <Badge 
+                      key={index}
+                      variant="outline"
+                      className="cursor-pointer hover:bg-blue-50"
+                      onClick={() => setReasoning(reasoning ? `${reasoning}\n• ${option}` : `• ${option}`)}
+                    >
+                      + {option}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+              
               <Textarea
                 value={reasoning}
                 onChange={(e) => setReasoning(e.target.value)}
@@ -411,9 +585,43 @@ const TradeNotes = () => {
               <CardTitle className="flex items-center space-x-2">
                 <Brain className="w-5 h-5 text-purple-600" />
                 <span>Emotional State & Psychology</span>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="ml-auto text-xs"
+                  onClick={() => setShowAiSuggestions(!showAiSuggestions)}
+                >
+                  <Lightbulb className="w-3 h-3 mr-1" />
+                  AI Help
+                </Button>
               </CardTitle>
             </CardHeader>
             <CardContent>
+              {showAiSuggestions && (
+                <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200 text-sm text-blue-800">
+                  <div className="flex items-start">
+                    <Lightbulb className="w-4 h-4 text-blue-600 mt-0.5 mr-2 flex-shrink-0" />
+                    <p>{aiSuggestions.emotions}</p>
+                  </div>
+                </div>
+              )}
+              
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-slate-700 mb-2">Quick Options</label>
+                <div className="flex flex-wrap gap-2 mb-4">
+                  {predefinedOptions.emotions.map((option, index) => (
+                    <Badge 
+                      key={index}
+                      variant="outline"
+                      className="cursor-pointer hover:bg-purple-50"
+                      onClick={() => setEmotions(emotions ? `${emotions}\n• ${option}` : `• ${option}`)}
+                    >
+                      + {option}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+              
               <Textarea
                 value={emotions}
                 onChange={(e) => setEmotions(e.target.value)}
@@ -435,9 +643,43 @@ const TradeNotes = () => {
               <CardTitle className="flex items-center space-x-2">
                 <CheckCircle className="w-5 h-5 text-green-600" />
                 <span>Key Lessons & What Worked</span>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="ml-auto text-xs"
+                  onClick={() => setShowAiSuggestions(!showAiSuggestions)}
+                >
+                  <Lightbulb className="w-3 h-3 mr-1" />
+                  AI Help
+                </Button>
               </CardTitle>
             </CardHeader>
             <CardContent>
+              {showAiSuggestions && (
+                <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200 text-sm text-blue-800">
+                  <div className="flex items-start">
+                    <Lightbulb className="w-4 h-4 text-blue-600 mt-0.5 mr-2 flex-shrink-0" />
+                    <p>{aiSuggestions.lessons}</p>
+                  </div>
+                </div>
+              )}
+              
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-slate-700 mb-2">Quick Options</label>
+                <div className="flex flex-wrap gap-2 mb-4">
+                  {predefinedOptions.lessons.map((option, index) => (
+                    <Badge 
+                      key={index}
+                      variant="outline"
+                      className="cursor-pointer hover:bg-green-50"
+                      onClick={() => setLessons(lessons ? `${lessons}\n• ${option}` : `• ${option}`)}
+                    >
+                      + {option}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+              
               <Textarea
                 value={lessons}
                 onChange={(e) => setLessons(e.target.value)}
@@ -458,9 +700,43 @@ const TradeNotes = () => {
               <CardTitle className="flex items-center space-x-2">
                 <AlertCircle className="w-5 h-5 text-red-600" />
                 <span>Mistakes & Areas for Improvement</span>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="ml-auto text-xs"
+                  onClick={() => setShowAiSuggestions(!showAiSuggestions)}
+                >
+                  <Lightbulb className="w-3 h-3 mr-1" />
+                  AI Help
+                </Button>
               </CardTitle>
             </CardHeader>
             <CardContent>
+              {showAiSuggestions && (
+                <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200 text-sm text-blue-800">
+                  <div className="flex items-start">
+                    <Lightbulb className="w-4 h-4 text-blue-600 mt-0.5 mr-2 flex-shrink-0" />
+                    <p>{aiSuggestions.mistakes}</p>
+                  </div>
+                </div>
+              )}
+              
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-slate-700 mb-2">Quick Options</label>
+                <div className="flex flex-wrap gap-2 mb-4">
+                  {predefinedOptions.mistakes.map((option, index) => (
+                    <Badge 
+                      key={index}
+                      variant="outline"
+                      className="cursor-pointer hover:bg-red-50"
+                      onClick={() => setMistakes(mistakes ? `${mistakes}\n• ${option}` : `• ${option}`)}
+                    >
+                      + {option}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+              
               <Textarea
                 value={mistakes}
                 onChange={(e) => setMistakes(e.target.value)}
@@ -477,6 +753,68 @@ const TradeNotes = () => {
             </CardContent>
           </Card>
         </div>
+
+        {/* Custom Fields Section */}
+        <Card className="border-0 shadow-lg mb-8">
+          <CardHeader>
+            <CardTitle className="flex items-center space-x-2">
+              <FileText className="w-5 h-5 text-blue-600" />
+              <span>Custom Fields</span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-6">
+              {/* Existing Custom Fields */}
+              {Object.keys(customFields).length > 0 && (
+                <div className="space-y-4">
+                  {Object.entries(customFields).map(([key, value]) => (
+                    <div key={key} className="grid grid-cols-1 md:grid-cols-[200px_1fr_auto] gap-4 items-start">
+                      <div className="text-sm font-medium text-slate-700">{key}</div>
+                      <Textarea
+                        value={value}
+                        onChange={(e) => updateCustomField(key, e.target.value)}
+                        placeholder={`Enter ${key} details...`}
+                        className="min-h-[100px] resize-none"
+                      />
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        className="text-red-600 hover:bg-red-50 hover:text-red-700"
+                        onClick={() => removeCustomField(key)}
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              
+              {/* Add New Custom Field */}
+              <div className="pt-4 border-t">
+                <h4 className="font-medium text-slate-800 mb-3">Add Custom Field</h4>
+                <div className="flex space-x-2">
+                  <Input
+                    value={newFieldName}
+                    onChange={(e) => setNewFieldName(e.target.value)}
+                    placeholder="Enter field name..."
+                    className="flex-1"
+                  />
+                  <Button 
+                    onClick={addCustomField}
+                    disabled={!newFieldName.trim()}
+                    className="bg-blue-600 hover:bg-blue-700"
+                  >
+                    <PlusCircle className="w-4 h-4 mr-2" />
+                    Add Field
+                  </Button>
+                </div>
+                <p className="text-xs text-slate-500 mt-2">
+                  Create custom fields to track specific aspects of your trades (e.g., "Market Conditions", "Risk/Reward Ratio", "Trade Setup")
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Save Button - Sticky at bottom */}
         <div className="sticky bottom-4 text-center bg-white/90 backdrop-blur-sm p-4 rounded-lg border shadow-lg">
