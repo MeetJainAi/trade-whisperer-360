@@ -5,9 +5,9 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { BarChart3, ArrowLeft, TrendingUp, TrendingDown, Percent, Clock, BookOpen, Scale, CalendarDays, Tags, Target, Brain, AlertTriangle, Info, Trophy, Shield, Zap, Activity, PieChart, BarChart, LineChart, DollarSign } from 'lucide-react';
+import { BarChart3, ArrowLeft, TrendingUp, TrendingDown, Percent, Clock, BookOpen, Scale, CalendarDays, Tags, Target, Brain, AlertTriangle, Info, Trophy, Shield, Zap, Activity, PieChart, BarChart as BarChartIcon, LineChart, DollarSign } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, LineChart, Line, Cell, PieChart as RechartsPieChart, Pie, Area, AreaChart, ComposedChart, Scatter, ScatterChart } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, LineChart as RechartsLineChart, Line, Cell, PieChart as RechartsPieChart, Pie, Area, AreaChart, ComposedChart, Scatter, ScatterChart } from 'recharts';
 import { Tables } from '@/integrations/supabase/types';
 import TradesLogTable from './TradesLogTable';
 import { calculateMetrics } from "@/lib/trade-metrics";
@@ -340,7 +340,7 @@ const AnalysisView = ({ currentSession, onUploadNew }: AnalysisViewProps) => {
         <Tabs defaultValue="overview" className="space-y-6">
           <TabsList className="grid w-full grid-cols-6">
             <TabsTrigger value="overview" className="flex items-center space-x-2">
-              <BarChart className="w-4 h-4" />
+              <BarChartIcon className="w-4 h-4" />
               <span>Overview</span>
             </TabsTrigger>
             <TabsTrigger value="performance" className="flex items-center space-x-2">
@@ -434,7 +434,7 @@ const AnalysisView = ({ currentSession, onUploadNew }: AnalysisViewProps) => {
               <Card className="border-0 shadow-lg">
                 <CardHeader>
                   <CardTitle className="flex items-center space-x-2">
-                    <BarChart className="w-5 h-5 text-blue-600" />
+                    <BarChartIcon className="w-5 h-5 text-blue-600" />
                     <span>P&L Distribution</span>
                   </CardTitle>
                   <CardDescription>How your wins and losses are distributed</CardDescription>
