@@ -23,6 +23,8 @@ const TradeNotes = () => {
   const [tags, setTags] = useState<string[]>([]);
   const [newTag, setNewTag] = useState('');
   const [reasoning, setReasoning] = useState('');
+  const [strategyOptions, setStrategyOptions] = useState<string[]>([]);
+  const [newStrategyOption, setNewStrategyOption] = useState('');
   const [emotions, setEmotions] = useState('');
   const [lessons, setLessons] = useState('');
   const [mistakes, setMistakes] = useState(''); 
@@ -33,13 +35,15 @@ const TradeNotes = () => {
     reasoning: [],
     emotions: [],
     lessons: [],
-    mistakes: []
+    mistakes: [],
+    strategy: []
   });
   const [newCustomOption, setNewCustomOption] = useState<{[key: string]: string}>({
     reasoning: '',
     emotions: '',
     lessons: '',
-    mistakes: ''
+    mistakes: '',
+    strategy: ''
   });
   const [showAiSuggestions, setShowAiSuggestions] = useState(false);
 
@@ -107,6 +111,11 @@ const TradeNotes = () => {
             if (detailedNotes.savedOptions) {
               setSavedOptions(detailedNotes.savedOptions);
             }
+            
+            // Load strategy options if they exist
+            if (detailedNotes.strategyOptions) {
+              setStrategyOptions(detailedNotes.strategyOptions);
+            }
           } else {
             // If notes is not JSON, keep it as simple notes
             setReasoning(trade.notes);
@@ -129,6 +138,7 @@ const TradeNotes = () => {
       mistakes,
       customFields,
       savedOptions,
+      strategyOptions,
       lastUpdated: new Date().toISOString()
     };
 
@@ -177,6 +187,7 @@ const TradeNotes = () => {
   // Load saved options from localStorage on component mount
   useEffect(() => {
     try {
+      // Load saved options
       const savedOptionsFromStorage = localStorage.getItem('traderInsight_savedOptions');
       if (savedOptionsFromStorage) {
         const parsedOptions = JSON.parse(savedOptionsFromStorage);
@@ -184,6 +195,13 @@ const TradeNotes = () => {
           ...prevOptions,
           ...parsedOptions
         }));
+      }
+      
+      // Load strategy options
+      const strategyOptionsFromStorage = localStorage.getItem('traderInsight_strategyOptions');
+      if (strategyOptionsFromStorage) {
+        const parsedStrategyOptions = JSON.parse(strategyOptionsFromStorage);
+        setStrategyOptions(parsedStrategyOptions);
       }
     } catch (error) {
       console.error('Error loading saved options:', error);
@@ -240,20 +258,61 @@ const TradeNotes = () => {
     }
   };
 
+  // Save strategy option
+  const saveStrategyOption = () => {
+    if (!newStrategyOption || newStrategyOption.trim() === '') return;
+    
+    const option = newStrategyOption.trim();
+    
+    // Update state
+    const updatedOptions = [...strategyOptions, option];
+    setStrategyOptions(updatedOptions);
+    
+    // Reset input
+    setNewStrategyOption('');
+    
+    // Save to localStorage
+    try {
+      localStorage.setItem('traderInsight_strategyOptions', JSON.stringify(updatedOptions));
+    } catch (error) {
+      console.error('Error saving strategy options to localStorage:', error);
+    }
+    
+    toast({
+      title: "Strategy option saved",
+      description: `"${option}" added to your strategy options.`,
+    });
+  };
+
+  // Remove a strategy option
+  const removeStrategyOption = (option: string) => {
+    const updatedOptions = strategyOptions.filter(item => item !== option);
+    setStrategyOptions(updatedOptions);
+    
+    // Update localStorage
+    try {
+      localStorage.setItem('traderInsight_strategyOptions', JSON.stringify(updatedOptions));
+    } catch (error) {
+      console.error('Error saving strategy options to localStorage:', error);
+    }
+  };
+
   // Add option text to the corresponding field
   const addOptionToField = (field: string, option: string) => {
     const setterFunctions = {
       reasoning: setReasoning,
       emotions: setEmotions,
       lessons: setLessons,
-      mistakes: setMistakes
+      mistakes: setMistakes,
+      strategy: setStrategy
     };
     
     const currentValue = {
       reasoning,
       emotions,
       lessons,
-      mistakes
+      mistakes,
+      strategy
     }[field];
     
     setterFunctions[field](currentValue ? `${currentValue}\n• ${option}` : `• ${option}`);
@@ -266,6 +325,23 @@ const TradeNotes = () => {
     psychology: ['confident', 'fearful', 'greedy', 'revenge-trading', 'overtrading', 'fomo', 'patient'],
     setup: ['breakout', 'pullback', 'reversal', 'trend-following', 'scalp', 'swing']
   };
+
+  // Predefined strategy options
+  const predefinedStrategyOptions = [
+    'Breakout',
+    'Pullback',
+    'Trend Following',
+    'Mean Reversion',
+    'Gap Fill',
+    'Momentum',
+    'Scalping',
+    'Swing Trading',
+    'VWAP Bounce',
+    'Support/Resistance',
+    'Double Bottom/Top',
+    'Flag Pattern',
+    'Moving Average Crossover'
+  ];
 
   const toggleQuickTag = (tag: string) => {
     if (tags.includes(tag)) {
@@ -470,12 +546,86 @@ const TradeNotes = () => {
             <CardContent>
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">Strategy Used</label>
-                  <Input
-                    value={strategy}
-                    onChange={(e) => setStrategy(e.target.value)}
-                    placeholder="e.g., Breakout, Mean Reversion, Scalping..."
-                  />
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Strategy Used</label>                  
+                  <div className="mb-4">
+                    <div className="flex flex-wrap gap-2 mb-4">
+                      {/* System predefined options */}
+                      <div className="w-full mb-2">
+                        <h5 className="text-xs font-medium text-slate-500 mb-1 flex items-center">
+                          <Settings className="w-3 h-3 mr-1" /> System Options
+                        </h5>
+                        <div className="flex flex-wrap gap-2">
+                          {predefinedStrategyOptions.map((option, index) => (
+                            <Badge 
+                              key={index}
+                              variant="outline"
+                              className="cursor-pointer hover:bg-blue-50"
+                              onClick={() => setStrategy(option)}
+                            >
+                              {option}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                      
+                      {/* User's custom saved options */}
+                      {strategyOptions.length > 0 && (
+                        <div className="w-full">
+                          <h5 className="text-xs font-medium text-slate-500 mb-1 flex items-center">
+                            <Star className="w-3 h-3 mr-1 text-amber-500" /> My Saved Strategies
+                          </h5>
+                          <div className="flex flex-wrap gap-2">
+                            {strategyOptions.map((option, index) => (
+                              <div key={index} className="flex items-center">
+                                <Badge 
+                                  variant="default"
+                                  className="cursor-pointer bg-amber-100 text-amber-800 hover:bg-amber-200"
+                                  onClick={() => setStrategy(option)}
+                                >
+                                  {option}
+                                </Badge>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-5 w-5 p-0 ml-1 text-slate-400 hover:text-red-500"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    removeStrategyOption(option);
+                                  }}
+                                >
+                                  <X className="h-3 w-3" />
+                                </Button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Add new custom option */}
+                      <div className="w-full mt-2 flex items-center space-x-2">
+                        <Input
+                          value={newStrategyOption}
+                          onChange={(e) => setNewStrategyOption(e.target.value)}
+                          placeholder="Add your own strategy..."
+                          className="flex-1"
+                          onKeyPress={(e) => e.key === 'Enter' && saveStrategyOption()}
+                        />
+                        <Badge 
+                          variant="default"
+                          className="cursor-pointer bg-blue-600 hover:bg-blue-700"
+                          onClick={saveStrategyOption}
+                        >
+                          <Plus className="w-3 h-3 mr-1" /> Save
+                        </Badge>
+                      </div>
+                    </div>
+                    
+                    <Input
+                      value={strategy}
+                      onChange={(e) => setStrategy(e.target.value)}
+                      placeholder="e.g., Breakout, Mean Reversion, Scalping..."
+                    />
+                  </div>
                 </div>
                 
                 <div>
