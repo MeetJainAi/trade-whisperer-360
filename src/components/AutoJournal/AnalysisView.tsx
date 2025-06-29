@@ -412,7 +412,7 @@ const AnalysisView = ({ currentSession, onUploadNew }: AnalysisViewProps) => {
                 </CardHeader>
                 <CardContent>
                   <ResponsiveContainer width="100%" height={300}>
-                    <AreaChart data={currentSession.equity_curve as any[]}>
+                    <AreaChart data={(currentSession.equity_curve as any[]) || []}>
                       <defs>
                         <linearGradient id="equityGradient" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
@@ -640,7 +640,7 @@ const AnalysisView = ({ currentSession, onUploadNew }: AnalysisViewProps) => {
                 </CardHeader>
                 <CardContent>
                   <ResponsiveContainer width="100%" height={300}>
-                    <AreaChart data={currentSession.equity_curve as any[]}>
+                    <AreaChart data={(currentSession.equity_curve as any[]) || []}>
                       <defs>
                         <linearGradient id="drawdownGradient" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="5%" stopColor="#ef4444" stopOpacity={0.3}/>
