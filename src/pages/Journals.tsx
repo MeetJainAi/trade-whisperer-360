@@ -12,7 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { toast } from '@/components/ui/use-toast';
 import { Badge } from '@/components/ui/badge';
 import { Tables, TablesInsert } from '@/integrations/supabase/types';
-import { PlusCircle, Trash2, Settings, BarChart3, ChevronRight, TrendingUp, ArrowUpRight, FileSpreadsheet, PencilLine } from 'lucide-react';
+import { PlusCircle, Trash2, Settings, BarChart3, ChevronRight, TrendingUp, ArrowUpRight, FileSpreadsheet, PencilLine, Info } from 'lucide-react';
 
 type Journal = Tables<'journals'>;
 
