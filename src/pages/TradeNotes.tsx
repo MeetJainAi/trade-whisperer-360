@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { toast } from '@/components/ui/use-toast';
 import { Tables } from '@/integrations/supabase/types';
-import { ArrowLeft, Save, Calendar, DollarSign, TrendingUp, TrendingDown, Brain, Target, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Save, Calendar, DollarSign, TrendingUp, TrendingDown, Brain, Target, AlertCircle, CheckCircle } from 'lucide-react';
 import { format } from 'date-fns';
 
 const TradeNotes = () => {
@@ -19,7 +19,6 @@ const TradeNotes = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
-  const [notes, setNotes] = useState('');
   const [strategy, setStrategy] = useState('');
   const [tags, setTags] = useState<string[]>([]);
   const [newTag, setNewTag] = useState('');
@@ -69,7 +68,6 @@ const TradeNotes = () => {
 
   useEffect(() => {
     if (trade) {
-      setNotes(trade.notes || '');
       setStrategy((trade as any).strategy || '');
       setTags((trade as any).tags || []);
       
@@ -123,6 +121,21 @@ const TradeNotes = () => {
     setTags(tags.filter(tag => tag !== tagToRemove));
   };
 
+  // Predefined tags for quick selection
+  const quickTags = {
+    quality: ['excellent', 'good', 'average', 'poor'],
+    execution: ['patient-entry', 'good-exit', 'followed-plan', 'emotional', 'rushed', 'disciplined'],
+    psychology: ['confident', 'fearful', 'greedy', 'revenge-trading', 'overtrading', 'fomo', 'patient'],
+    setup: ['breakout', 'pullback', 'reversal', 'trend-following', 'scalp', 'swing']
+  };
+
+  const toggleQuickTag = (tag: string) => {
+    if (tags.includes(tag)) {
+      removeTag(tag);
+    } else {
+      setTags([...tags, tag]);
+    }
+  };
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-screen">
@@ -253,7 +266,7 @@ const TradeNotes = () => {
         <div className="grid lg:grid-cols-2 gap-6 mb-8">
           <Card className="border-0 shadow-lg">
             <CardHeader>
-              <CardTitle>Strategy & Classification</CardTitle>
+              <CardTitle>Strategy & Quick Classification</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
@@ -267,7 +280,7 @@ const TradeNotes = () => {
                 </div>
                 
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">Tags</label>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Custom Tags</label>
                   <div className="flex flex-wrap gap-2 mb-2">
                     {tags.map((tag, index) => (
                       <Badge 
@@ -296,52 +309,69 @@ const TradeNotes = () => {
 
           <Card className="border-0 shadow-lg">
             <CardHeader>
-              <CardTitle className="flex items-center space-x-2">
-                <AlertCircle className="w-5 h-5 text-amber-600" />
-                <span>Quick Assessment</span>
-              </CardTitle>
+              <CardTitle>Quick Tag Categories</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="space-y-4">
-                <div className="p-4 bg-blue-50 rounded-lg">
-                  <h4 className="font-medium text-blue-900 mb-2">Trade Quality</h4>
+              <div className="space-y-6">
+                <div>
+                  <h4 className="font-medium text-slate-800 mb-3">Trade Quality</h4>
                   <div className="flex space-x-2">
-                    {['Poor', 'Average', 'Good', 'Excellent'].map((quality) => (
+                    {quickTags.quality.map((quality) => (
                       <Badge 
                         key={quality}
-                        variant={tags.includes(quality.toLowerCase()) ? 'default' : 'outline'}
+                        variant={tags.includes(quality) ? 'default' : 'outline'}
                         className="cursor-pointer"
-                        onClick={() => {
-                          if (tags.includes(quality.toLowerCase())) {
-                            removeTag(quality.toLowerCase());
-                          } else {
-                            setTags([...tags.filter(t => !['poor', 'average', 'good', 'excellent'].includes(t)), quality.toLowerCase()]);
-                          }
-                        }}
+                        onClick={() => toggleQuickTag(quality)}
                       >
-                        {quality}
+                        {quality.charAt(0).toUpperCase() + quality.slice(1)}
                       </Badge>
                     ))}
                   </div>
                 </div>
                 
-                <div className="p-4 bg-green-50 rounded-lg">
-                  <h4 className="font-medium text-green-900 mb-2">Execution</h4>
-                  <div className="flex flex-wrap space-x-2">
-                    {['patient-entry', 'good-exit', 'followed-plan', 'emotional'].map((exec) => (
+                <div>
+                  <h4 className="font-medium text-slate-800 mb-3">Execution</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {quickTags.execution.map((exec) => (
                       <Badge 
                         key={exec}
                         variant={tags.includes(exec) ? 'default' : 'outline'}
-                        className="cursor-pointer mb-1"
-                        onClick={() => {
-                          if (tags.includes(exec)) {
-                            removeTag(exec);
-                          } else {
-                            setTags([...tags, exec]);
-                          }
-                        }}
+                        className="cursor-pointer"
+                        onClick={() => toggleQuickTag(exec)}
                       >
                         {exec.replace('-', ' ')}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+                
+                <div>
+                  <h4 className="font-medium text-slate-800 mb-3">Psychology</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {quickTags.psychology.map((psych) => (
+                      <Badge 
+                        key={psych}
+                        variant={tags.includes(psych) ? 'default' : 'outline'}
+                        className="cursor-pointer"
+                        onClick={() => toggleQuickTag(psych)}
+                      >
+                        {psych.replace('-', ' ')}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+                
+                <div>
+                  <h4 className="font-medium text-slate-800 mb-3">Setup Type</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {quickTags.setup.map((setup) => (
+                      <Badge 
+                        key={setup}
+                        variant={tags.includes(setup) ? 'default' : 'outline'}
+                        className="cursor-pointer"
+                        onClick={() => toggleQuickTag(setup)}
+                      >
+                        {setup.replace('-', ' ')}
                       </Badge>
                     ))}
                   </div>
@@ -352,10 +382,13 @@ const TradeNotes = () => {
         </div>
 
         {/* Detailed Analysis */}
-        <div className="grid lg:grid-cols-2 gap-6">
+        <div className="grid lg:grid-cols-2 gap-6 mb-8">
           <Card className="border-0 shadow-lg">
             <CardHeader>
-              <CardTitle>Trade Reasoning</CardTitle>
+              <CardTitle className="flex items-center space-x-2">
+                <Target className="w-5 h-5 text-blue-600" />
+                <span>Trade Reasoning</span>
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <Textarea
@@ -375,7 +408,10 @@ const TradeNotes = () => {
 
           <Card className="border-0 shadow-lg">
             <CardHeader>
-              <CardTitle>Emotional State</CardTitle>
+              <CardTitle className="flex items-center space-x-2">
+                <Brain className="w-5 h-5 text-purple-600" />
+                <span>Emotional State & Psychology</span>
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <Textarea
@@ -396,7 +432,10 @@ const TradeNotes = () => {
 
           <Card className="border-0 shadow-lg">
             <CardHeader>
-              <CardTitle>Key Lessons</CardTitle>
+              <CardTitle className="flex items-center space-x-2">
+                <CheckCircle className="w-5 h-5 text-green-600" />
+                <span>Key Lessons & What Worked</span>
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <Textarea
@@ -416,7 +455,10 @@ const TradeNotes = () => {
 
           <Card className="border-0 shadow-lg">
             <CardHeader>
-              <CardTitle>Mistakes & Improvements</CardTitle>
+              <CardTitle className="flex items-center space-x-2">
+                <AlertCircle className="w-5 h-5 text-red-600" />
+                <span>Mistakes & Areas for Improvement</span>
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <Textarea
@@ -436,8 +478,8 @@ const TradeNotes = () => {
           </Card>
         </div>
 
-        {/* Save Button */}
-        <div className="mt-8 text-center">
+        {/* Save Button - Sticky at bottom */}
+        <div className="sticky bottom-4 text-center bg-white/90 backdrop-blur-sm p-4 rounded-lg border shadow-lg">
           <Button 
             onClick={handleSave} 
             disabled={updateTradeMutation.isPending}
