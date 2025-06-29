@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -44,7 +44,44 @@ const ColumnMappingDialog = ({
   csvHeaders,
   csvData
 }: ColumnMappingDialogProps) => {
-  const [mapping, setMapping] = useState<ColumnMapping>(initialMapping);
+  const [mapping, setMapping] = useState<ColumnMapping>({});
+
+  // Initialize mapping with fallbacks for required fields
+  useEffect(() => {
+    const enhancedMapping = { ...initialMapping };
+    
+    // Ensure all required fields have some mapping
+    REQUIRED_FIELDS.forEach(field => {
+      if (!enhancedMapping[field.key]) {
+        // Try to find a reasonable fallback
+        const possibleHeaders = csvHeaders.filter(header => {
+          const lowerHeader = header.toLowerCase();
+          const fieldKey = field.key.toLowerCase();
+          
+          if (fieldKey === 'datetime') {
+            return lowerHeader.includes('date') || lowerHeader.includes('time') || lowerHeader.includes('timestamp');
+          }
+          if (fieldKey === 'symbol') {
+            return lowerHeader.includes('symbol') || lowerHeader.includes('ticker') || lowerHeader.includes('instrument');
+          }
+          if (fieldKey === 'qty') {
+            return lowerHeader.includes('qty') || lowerHeader.includes('quantity') || lowerHeader.includes('size') || lowerHeader.includes('amount');
+          }
+          if (fieldKey === 'pnl') {
+            return lowerHeader.includes('pnl') || lowerHeader.includes('p&l') || lowerHeader.includes('profit') || lowerHeader.includes('loss');
+          }
+          
+          return lowerHeader.includes(fieldKey);
+        });
+        
+        if (possibleHeaders.length > 0) {
+          enhancedMapping[field.key] = possibleHeaders[0];
+        }
+      }
+    });
+    
+    setMapping(enhancedMapping);
+  }, [initialMapping, csvHeaders]);
 
   const handleMappingChange = (field: string, csvHeader: string) => {
     setMapping(prev => ({
@@ -56,11 +93,19 @@ const ColumnMappingDialog = ({
   const getPreviewValue = (field: string): string => {
     const header = mapping[field];
     if (!header || !csvData[0]) return 'No data';
-    return csvData[0][header]?.toString() || 'Empty';
+    const value = csvData[0][header];
+    if (value === null || value === undefined) return 'Empty';
+    return value.toString().slice(0, 50);
   };
 
   const isValid = () => {
-    return REQUIRED_FIELDS.every(field => mapping[field] && mapping[field] !== '');
+    const missingFields = REQUIRED_FIELDS.filter(field => !mapping[field.key] || mapping[field.key] === '');
+    console.log('Validation check:', { mapping, missingFields });
+    return missingFields.length === 0;
+  };
+
+  const getMissingRequiredFields = () => {
+    return REQUIRED_FIELDS.filter(field => !mapping[field.key] || mapping[field.key] === '');
   };
 
   const getFieldStatus = (field: string, isRequired: boolean) => {
@@ -70,6 +115,9 @@ const ColumnMappingDialog = ({
     }
     return mapped ? 'success' : 'optional';
   };
+
+  const missingRequired = getMissingRequiredFields();
+  const canProcess = isValid();
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -82,6 +130,13 @@ const ColumnMappingDialog = ({
           <p className="text-sm text-slate-600">
             Review and adjust how your CSV columns map to our trade fields. Required fields must be mapped.
           </p>
+          {missingRequired.length > 0 && (
+            <div className="mt-2 p-3 bg-red-50 border border-red-200 rounded-lg">
+              <p className="text-sm text-red-800 font-medium">
+                Missing required mappings: {missingRequired.map(f => f.label).join(', ')}
+              </p>
+            </div>
+          )}
         </DialogHeader>
 
         <div className="space-y-6">
@@ -94,8 +149,12 @@ const ColumnMappingDialog = ({
             <div className="grid gap-4">
               {REQUIRED_FIELDS.map((field) => {
                 const status = getFieldStatus(field.key, true);
+                const isMapped = mapping[field.key] && mapping[field.key] !== '';
+                
                 return (
-                  <div key={field.key} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center p-3 border rounded-lg">
+                  <div key={field.key} className={`grid grid-cols-1 md:grid-cols-3 gap-4 items-center p-3 border rounded-lg ${
+                    !isMapped ? 'border-red-200 bg-red-50' : 'border-green-200 bg-green-50'
+                  }`}>
                     <div>
                       <div className="flex items-center gap-2">
                         <Label className="font-medium">{field.label}</Label>
@@ -104,6 +163,9 @@ const ColumnMappingDialog = ({
                         ) : (
                           <AlertCircle className="w-4 h-4 text-red-500" />
                         )}
+                        <Badge variant={isMapped ? 'default' : 'destructive'} className="text-xs">
+                          Required
+                        </Badge>
                       </div>
                       <p className="text-xs text-slate-600">{field.description}</p>
                     </div>
@@ -111,11 +173,11 @@ const ColumnMappingDialog = ({
                       value={mapping[field.key] || 'none'}
                       onValueChange={(value) => handleMappingChange(field.key, value)}
                     >
-                      <SelectTrigger>
+                      <SelectTrigger className={!isMapped ? 'border-red-300' : 'border-green-300'}>
                         <SelectValue placeholder="Select column" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="none">-- No mapping --</SelectItem>
+                        <SelectItem value="none">-- Select a column --</SelectItem>
                         {csvHeaders.map((header) => (
                           <SelectItem key={header} value={header}>
                             {header}
@@ -125,7 +187,7 @@ const ColumnMappingDialog = ({
                     </Select>
                     <div className="text-sm">
                       <Label className="text-xs text-slate-500">Preview:</Label>
-                      <div className="mt-1 p-2 bg-slate-50 rounded text-xs font-mono">
+                      <div className="mt-1 p-2 bg-white rounded text-xs font-mono border">
                         {getPreviewValue(field.key)}
                       </div>
                     </div>
@@ -144,6 +206,8 @@ const ColumnMappingDialog = ({
             <div className="grid gap-4">
               {OPTIONAL_FIELDS.map((field) => {
                 const status = getFieldStatus(field.key, false);
+                const isMapped = mapping[field.key] && mapping[field.key] !== '';
+                
                 return (
                   <div key={field.key} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center p-3 border rounded-lg">
                     <div>
@@ -174,7 +238,7 @@ const ColumnMappingDialog = ({
                     </Select>
                     <div className="text-sm">
                       <Label className="text-xs text-slate-500">Preview:</Label>
-                      <div className="mt-1 p-2 bg-slate-50 rounded text-xs font-mono">
+                      <div className="mt-1 p-2 bg-slate-50 rounded text-xs font-mono border">
                         {getPreviewValue(field.key)}
                       </div>
                     </div>
@@ -185,16 +249,20 @@ const ColumnMappingDialog = ({
           </div>
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2">
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
           <Button 
             onClick={() => onConfirm(mapping)} 
-            disabled={!isValid()}
-            className="bg-gradient-to-r from-blue-600 to-green-500 hover:from-blue-700 hover:to-green-600"
+            disabled={!canProcess}
+            className={`${
+              canProcess 
+                ? 'bg-gradient-to-r from-blue-600 to-green-500 hover:from-blue-700 hover:to-green-600' 
+                : 'bg-gray-400 cursor-not-allowed'
+            }`}
           >
-            Process {csvData.length} Rows
+            {canProcess ? `Process ${csvData.length} Rows` : `Map Required Fields First`}
           </Button>
         </DialogFooter>
       </DialogContent>
