@@ -526,7 +526,39 @@ export const useProcessCsv = (journal: Journal) => {
 
     if (finalTrades.length === 0) {
       const totalDuplicates = summary.duplicatesSkipped + databaseDuplicateCount;
-      throw new Error(`No new trades to import. All ${validTrades.length} trades are duplicates (${summary.duplicatesSkipped} from CSV, ${databaseDuplicateCount} already in database).`);
+      
+      // Clear loading state
+      setLoadingMessage('');
+      
+      // Clear mapping state
+      setColumnMapping(null);
+      setCsvData(null);
+      
+      // Show user-friendly toast notification instead of throwing error
+      toast({
+        title: '📋 All Trades Already Exist',
+        description: `No new trades were imported because all ${validTrades.length} trades in your CSV file already exist in this journal. ${summary.duplicatesSkipped} were duplicates within the CSV, and ${databaseDuplicateCount} already exist in your database.`,
+        variant: 'default'
+      });
+      
+      // Show additional helpful message after a short delay
+      setTimeout(() => {
+        toast({
+          title: 'ℹ️ Duplicate Detection Working Perfectly',
+          description: 'Our smart duplicate detection system prevented any duplicate trades from being imported. Your journal remains clean and accurate.',
+          variant: 'default'
+        });
+      }, 2000);
+
+      console.log(`📊 Complete Duplicate Summary:`, {
+        totalCsvRows: summary.totalRows,
+        validTrades: validTrades.length,
+        csvDuplicates: summary.duplicatesSkipped,
+        databaseDuplicates: databaseDuplicateCount,
+        finalResult: 'All trades were duplicates - no import needed'
+      });
+
+      return; // Exit gracefully without reloading page
     }
 
     /* ------------ Step 6: Store raw data ------------ */
@@ -672,13 +704,6 @@ export const useProcessCsv = (journal: Journal) => {
     /* ------------ Step 12: Show comprehensive results ------------ */
     const totalDuplicates = summary.duplicatesSkipped + summary.skippedDuplicates;
     
-    if (insertedCount === 0) {
-      // Delete the empty session
-      await supabase.from('trade_sessions').delete().eq('id', newSession.id);
-      
-      throw new Error(`No new trades were inserted. All ${finalTrades.length} trades appear to be duplicates of existing data in your journal.`);
-    }
-    
     // Enhanced success notification with detailed breakdown
     const skippedBreakdown = [];
     if (summary.parseErrors > 0) skippedBreakdown.push(`${summary.parseErrors} parse errors`);
@@ -732,7 +757,7 @@ export const useProcessCsv = (journal: Journal) => {
   const createFallbackMapping = (headers: string[]): Record<string, string> => {
     const mapping: Record<string, string> = {};
     
-    const patterns = {
+    const patterns: Record<string, RegExp> = {
       datetime: /^(date|time|timestamp|datetime|execution|trade.*time|bought.*timestamp|sold.*timestamp)$/i,
       symbol: /^(symbol|ticker|instrument|contract)$/i,
       side: /^(side|action|type|direction|buy.*sell)$/i,
