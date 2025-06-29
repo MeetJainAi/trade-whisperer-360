@@ -14,6 +14,7 @@ import SessionDetail from "./pages/SessionDetail";
 import TradeNotes from "./pages/TradeNotes";
 import NotFound from "./pages/NotFound";
 import Auth from "./pages/Auth";
+import PlaybookManager from "./pages/PlaybookManager";
 import { AuthProvider } from "./components/AuthProvider";
 import ProtectedRoute from "./components/ProtectedRoute";
 
@@ -48,6 +49,7 @@ function App() {
                 <Route path="/journals/:journalId" element={<JournalDetail />} />
                 <Route path="/journals/:journalId/sessions/:sessionId" element={<SessionDetail />} />
                 <Route path="/trade-notes/:tradeId" element={<TradeNotes />} />
+                <Route path="/playbooks" element={<PlaybookManager />} />
               </Route>
               
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}

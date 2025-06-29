@@ -3,7 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { BarChart3, Brain, Target, Calendar, TrendingUp, AlertCircle, CheckCircle, Clock } from 'lucide-react';
+import { BarChart3, Brain, Target, Calendar, TrendingUp, AlertCircle, CheckCircle, Clock, BookOpen } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 const Dashboard = () => {
@@ -181,6 +181,39 @@ const Dashboard = () => {
                 </div>
                 <div className="text-sm text-slate-600">
                   Last session: <span className="font-medium">2 hours ago</span>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card 
+            className="cursor-pointer hover:shadow-lg transition-all duration-200 border-0 shadow-md"
+            onClick={() => navigate('/playbooks')}
+          >
+            <CardHeader className="pb-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="w-12 h-12 rounded-xl bg-gradient-to-r from-indigo-500 to-indigo-600 flex items-center justify-center">
+                    <BookOpen className="w-6 h-6 text-white" />
+                  </div>
+                  <div>
+                    <CardTitle className="text-lg">Trading Playbooks</CardTitle>
+                    <CardDescription>Strategy management</CardDescription>
+                  </div>
+                </div>
+                <Badge variant="outline">
+                  3 active
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-slate-600">Best Performer:</span>
+                  <span className="font-medium text-green-600">Breakout Strategy</span>
+                </div>
+                <div className="text-sm text-slate-600">
+                  Win Rate: <span className="font-medium">72%</span>
                 </div>
               </div>
             </CardContent>

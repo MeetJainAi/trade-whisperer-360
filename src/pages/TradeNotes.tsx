@@ -8,9 +8,11 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { toast } from '@/components/ui/use-toast';
 import { Tables } from '@/integrations/supabase/types';
-import { ArrowLeft, Save, Calendar, DollarSign, TrendingUp, TrendingDown, Brain, Target, AlertCircle, CheckCircle, Image, PlusCircle, Link2, FileText, Lightbulb, Star, Plus, X, Settings } from 'lucide-react';
+import { ArrowLeft, Save, Calendar, DollarSign, TrendingUp, TrendingDown, Brain, Target, AlertCircle, CheckCircle, Image, PlusCircle, Link2, FileText, Lightbulb, Star, Plus, X, Settings, BookOpen, Sparkles, Link } from 'lucide-react';
 import { format } from 'date-fns';
 
 const TradeNotes = () => {
@@ -46,6 +48,12 @@ const TradeNotes = () => {
     strategy: ''
   });
   const [showAiSuggestions, setShowAiSuggestions] = useState(false);
+  const [playbookId, setPlaybookId] = useState<string>('');
+  const [tradingViewLink, setTradingViewLink] = useState('');
+  
+  // Custom field options
+  const [customOptions, setCustomOptions] = useState<{[key: string]: string[]}>({});
+  const [showCustomInputs, setShowCustomInputs] = useState<{[key: string]: boolean}>({});
 
   const { data: trade, isLoading, error } = useQuery<Tables<'trades'>>({
     queryKey: ['trade', tradeId],
@@ -63,6 +71,51 @@ const TradeNotes = () => {
     },
     enabled: !!tradeId,
   });
+
+  // Fetch playbooks
+  const { data: playbooks } = useQuery({
+    queryKey: ['playbooks', user?.id],
+    queryFn: async () => {
+      if (!user) return [];
+      const { data, error } = await supabase
+        .from('trading_playbooks')
+        .select('id, name, strategy_type')
+        .eq('user_id', user.id)
+        .eq('is_active', true)
+        .order('name');
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!user,
+  });
+
+  // Fetch custom field options
+  const { data: fieldOptions } = useQuery({
+    queryKey: ['custom_field_options', user?.id],
+    queryFn: async () => {
+      if (!user) return [];
+      const { data, error } = await supabase
+        .from('custom_field_options')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('usage_count', { ascending: false });
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!user,
+  });
+
+  // Group custom options by field
+  useEffect(() => {
+    if (fieldOptions) {
+      const grouped = fieldOptions.reduce((acc, option) => {
+        if (!acc[option.field_name]) acc[option.field_name] = [];
+        acc[option.field_name].push(option.option_value);
+        return acc;
+      }, {} as {[key: string]: string[]});
+      setCustomOptions(grouped);
+    }
+  }, [fieldOptions]);
 
   const updateTradeMutation = useMutation({
     mutationFn: async (updates: Partial<Tables<'trades'>>) => {
@@ -91,6 +144,7 @@ const TradeNotes = () => {
       setStrategy((trade as any).strategy || '');
       setTags((trade as any).tags || []);
       setImageUrl(trade.image_url || '');
+      setPlaybookId((trade as any).playbook_id || '');
       
       // Parse detailed notes if they exist
       try {
@@ -101,6 +155,7 @@ const TradeNotes = () => {
             setEmotions(detailedNotes.emotions || '');
             setLessons(detailedNotes.lessons || '');
             setMistakes(detailedNotes.mistakes || ''); 
+            setTradingViewLink(detailedNotes.tradingViewLink || '');
             
             // Load custom fields if they exist
             if (detailedNotes.customFields) {
@@ -136,6 +191,7 @@ const TradeNotes = () => {
       emotions,
       lessons,
       mistakes,
+      tradingViewLink,
       customFields,
       savedOptions,
       strategyOptions,
@@ -146,8 +202,53 @@ const TradeNotes = () => {
       notes: JSON.stringify(detailedNotes),
       strategy,
       tags, 
-      image_url: imageUrl
+      image_url: imageUrl,
+      playbook_id: playbookId || null,
     } as any);
+  };
+
+  const addCustomOption = async (fieldName: string, value: string) => {
+    if (!user || !value.trim()) return;
+    
+    try {
+      await supabase.rpc('increment_custom_option_usage', {
+        p_user_id: user.id,
+        p_field_name: fieldName,
+        p_option_value: value.trim()
+      });
+      
+      // Update local state
+      setCustomOptions(prev => ({
+        ...prev,
+        [fieldName]: [...(prev[fieldName] || []), value.trim()]
+      }));
+      
+      queryClient.invalidateQueries({ queryKey: ['custom_field_options', user.id] });
+    } catch (error) {
+      console.error('Error adding custom option:', error);
+    }
+  };
+
+  const applyCustomOption = (fieldName: string, value: string) => {
+    switch (fieldName) {
+      case 'reasoning':
+        setReasoning(prev => prev ? `${prev}\n\n${value}` : value);
+        break;
+      case 'emotions':
+        setEmotions(prev => prev ? `${prev}\n\n${value}` : value);
+        break;
+      case 'lessons':
+        setLessons(prev => prev ? `${prev}\n\n${value}` : value);
+        break;
+      case 'mistakes':
+        setMistakes(prev => prev ? `${prev}\n\n${value}` : value);
+        break;
+    }
+    
+    // Increment usage count
+    if (user) {
+      addCustomOption(fieldName, value);
+    }
   };
 
   const addTag = () => {
@@ -546,85 +647,64 @@ const TradeNotes = () => {
             <CardContent>
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">Strategy Used</label>                  
-                  <div className="mb-4">
-                    <div className="flex flex-wrap gap-2 mb-4">
-                      {/* System predefined options */}
-                      <div className="w-full mb-2">
-                        <h5 className="text-xs font-medium text-slate-500 mb-1 flex items-center">
-                          <Settings className="w-3 h-3 mr-1" /> System Options
-                        </h5>
-                        <div className="flex flex-wrap gap-2">
-                          {predefinedStrategyOptions.map((option, index) => (
-                            <Badge 
-                              key={index}
-                              variant="outline"
-                              className="cursor-pointer hover:bg-blue-50"
-                              onClick={() => setStrategy(option)}
-                            >
-                              {option}
-                            </Badge>
-                          ))}
-                        </div>
-                      </div>
-                      
-                      {/* User's custom saved options */}
-                      {strategyOptions.length > 0 && (
-                        <div className="w-full">
-                          <h5 className="text-xs font-medium text-slate-500 mb-1 flex items-center">
-                            <Star className="w-3 h-3 mr-1 text-amber-500" /> My Saved Strategies
-                          </h5>
-                          <div className="flex flex-wrap gap-2">
-                            {strategyOptions.map((option, index) => (
-                              <div key={index} className="flex items-center">
-                                <Badge 
-                                  variant="default"
-                                  className="cursor-pointer bg-amber-100 text-amber-800 hover:bg-amber-200"
-                                  onClick={() => setStrategy(option)}
-                                >
-                                  {option}
-                                </Badge>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="h-5 w-5 p-0 ml-1 text-slate-400 hover:text-red-500"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    removeStrategyOption(option);
-                                  }}
-                                >
-                                  <X className="h-3 w-3" />
-                                </Button>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      
-                      {/* Add new custom option */}
-                      <div className="w-full mt-2 flex items-center space-x-2">
-                        <Input
-                          value={newStrategyOption}
-                          onChange={(e) => setNewStrategyOption(e.target.value)}
-                          placeholder="Add your own strategy..."
-                          className="flex-1"
-                          onKeyPress={(e) => e.key === 'Enter' && saveStrategyOption()}
-                        />
-                        <Badge 
-                          variant="default"
-                          className="cursor-pointer bg-blue-600 hover:bg-blue-700"
-                          onClick={saveStrategyOption}
-                        >
-                          <Plus className="w-3 h-3 mr-1" /> Save
-                        </Badge>
-                      </div>
-                    </div>
-                    
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Strategy Used</label>
+                  <div className="space-y-2">
+                    <Select value={strategy} onValueChange={setStrategy}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select or type strategy..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="breakout">Breakout</SelectItem>
+                        <SelectItem value="trend-following">Trend Following</SelectItem>
+                        <SelectItem value="mean-reversion">Mean Reversion</SelectItem>
+                        <SelectItem value="scalping">Scalping</SelectItem>
+                        <SelectItem value="swing">Swing Trading</SelectItem>
+                        <SelectItem value="momentum">Momentum</SelectItem>
+                        <SelectItem value="contrarian">Contrarian</SelectItem>
+                        <SelectItem value="arbitrage">Arbitrage</SelectItem>
+                      </SelectContent>
+                    </Select>
                     <Input
+                      placeholder="Or type custom strategy..."
                       value={strategy}
                       onChange={(e) => setStrategy(e.target.value)}
-                      placeholder="e.g., Breakout, Mean Reversion, Scalping..."
                     />
+                  </div>
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Playbook Used</label>
+                  <Select value={playbookId} onValueChange={setPlaybookId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select playbook (optional)" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="">No Playbook</SelectItem>
+                      {playbooks?.map((playbook) => (
+                        <SelectItem key={playbook.id} value={playbook.id}>
+                          <div className="flex items-center space-x-2">
+                            <BookOpen className="w-4 h-4" />
+                            <span>{playbook.name}</span>
+                            {playbook.strategy_type && (
+                              <Badge variant="outline" className="text-xs">
+                                {playbook.strategy_type}
+                              </Badge>
+                            )}
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <div className="mt-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => navigate('/playbooks')}
+                      className="text-purple-600 border-purple-300 hover:bg-purple-50"
+                    >
+                      <Plus className="w-4 h-4 mr-2" />
+                      Create New Playbook
+                    </Button>
                   </div>
                 </div>
                 
@@ -772,475 +852,137 @@ const TradeNotes = () => {
               </div>
             </CardContent>
           </Card>
+
+          <Card className="border-0 shadow-lg">
+            <CardHeader>
+              <CardTitle>TradingView Chart</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">TradingView Screenshot Link</label>
+                  <div className="flex space-x-2">
+                    <Input
+                      placeholder="Paste TradingView screenshot URL..."
+                      value={tradingViewLink}
+                      onChange={(e) => setTradingViewLink(e.target.value)}
+                    />
+                    <Button variant="outline" size="icon">
+                      <Link className="w-4 h-4" />
+                    </Button>
+                  </div>
+                  {tradingViewLink && (
+                    <div className="mt-3 p-3 bg-slate-50 rounded-lg">
+                      <div className="flex items-center space-x-2 text-sm text-slate-600">
+                        <Image className="w-4 h-4" />
+                        <span>Chart link saved</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         </div>
 
-        {/* Detailed Analysis */}
-        <div className="grid lg:grid-cols-2 gap-6 mb-8">
-          <Card className="border-0 shadow-lg">
-            <CardHeader>
-              <CardTitle className="flex items-center space-x-2">
-                <Target className="w-5 h-5 text-blue-600" />
-                <span>Trade Reasoning</span>
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  className="ml-auto text-xs"
-                  onClick={() => setShowAiSuggestions(!showAiSuggestions)}
-                >
-                  <Lightbulb className="w-3 h-3 mr-1" />
-                  AI Help
-                </Button>
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {showAiSuggestions && (
-                <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200 text-sm text-blue-800">
-                  <div className="flex items-start">
-                    <Lightbulb className="w-4 h-4 text-blue-600 mt-0.5 mr-2 flex-shrink-0" />
-                    <p>{aiSuggestions.reasoning}</p>
-                  </div>
-                </div>
-              )}
-              
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-slate-700 mb-2">Quick Options</label>
-                <div className="flex flex-wrap gap-2 mb-4">
-                  {/* System predefined options */}
-                  <div className="w-full mb-2">
-                    <h5 className="text-xs font-medium text-slate-500 mb-1 flex items-center">
-                      <Settings className="w-3 h-3 mr-1" /> System Options
-                    </h5>
-                    <div className="flex flex-wrap gap-2">
-                      {predefinedOptions.reasoning.map((option, index) => (
-                        <Badge 
-                          key={index}
-                          variant="outline"
-                          className="cursor-pointer hover:bg-blue-50"
-                          onClick={() => addOptionToField('reasoning', option)}
-                        >
-                          + {option}
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-                  
-                  {/* User's custom saved options */}
-                  {savedOptions.reasoning && savedOptions.reasoning.length > 0 && (
-                    <div className="w-full">
-                      <h5 className="text-xs font-medium text-slate-500 mb-1 flex items-center">
-                        <Star className="w-3 h-3 mr-1 text-amber-500" /> My Saved Options
-                      </h5>
-                      <div className="flex flex-wrap gap-2">
-                        {savedOptions.reasoning.map((option, index) => (
-                          <div key={index} className="flex items-center">
-                            <Badge 
-                              variant="default"
-                              className="cursor-pointer bg-amber-100 text-amber-800 hover:bg-amber-200"
-                              onClick={() => addOptionToField('reasoning', option)}
-                            >
-                              + {option}
-                            </Badge>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-5 w-5 p-0 ml-1 text-slate-400 hover:text-red-500"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                removeCustomOption('reasoning', option);
-                              }}
-                            >
-                              <X className="h-3 w-3" />
-                            </Button>
+        {/* Enhanced Detailed Analysis with Custom Options */}
+        <div className="grid lg:grid-cols-2 gap-6">
+          {[
+            { key: 'reasoning', title: 'Trade Reasoning', placeholder: 'Why did you take this trade? What was your thesis?\n\n• Technical setup\n• Market conditions\n• Catalyst or news\n• Risk/reward ratio\n• Confluence factors' },
+            { key: 'emotions', title: 'Emotional State', placeholder: 'How were you feeling during this trade?\n\n• Pre-trade emotions\n• During the trade\n• After exit\n• Stress level (1-10)\n• Confidence level\n• Any biases at play?' },
+            { key: 'lessons', title: 'Key Lessons & What Worked', placeholder: 'What did you learn from this trade?\n\n• What worked well?\n• Market insights gained\n• Strategy refinements\n• Personal growth\n• Future applications' },
+            { key: 'mistakes', title: 'Mistakes & Improvements', placeholder: 'What could you have done better?\n\n• Entry timing issues\n• Exit mistakes\n• Risk management errors\n• Emotional decisions\n• Plan deviations\n• Next time improvements' }
+          ].map(({ key, title, placeholder }) => (
+            <Card key={key} className="border-0 shadow-lg">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle>{title}</CardTitle>
+                  <div className="flex space-x-2">
+                    {customOptions[key]?.length > 0 && (
+                      <Dialog>
+                        <DialogTrigger asChild>
+                          <Button variant="outline" size="sm">
+                            <Sparkles className="w-4 h-4 mr-2" />
+                            Quick Add
+                          </Button>
+                        </DialogTrigger>
+                        <DialogContent>
+                          <DialogHeader>
+                            <DialogTitle>Quick Add - {title}</DialogTitle>
+                          </DialogHeader>
+                          <div className="space-y-2 max-h-60 overflow-y-auto">
+                            {customOptions[key]?.map((option, index) => (
+                              <Button
+                                key={index}
+                                variant="outline"
+                                className="w-full text-left justify-start h-auto p-3"
+                                onClick={() => applyCustomOption(key, option)}
+                              >
+                                <div className="text-sm">{option}</div>
+                              </Button>
+                            ))}
                           </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  
-                  {/* Add new custom option */}
-                  <div className="w-full mt-2 flex items-center space-x-2">
-                    <Input
-                      value={newCustomOption.reasoning}
-                      onChange={(e) => setNewCustomOption({...newCustomOption, reasoning: e.target.value})}
-                      placeholder="Add your own custom option..."
-                      className="flex-1"
-                      onKeyPress={(e) => e.key === 'Enter' && saveCustomOption('reasoning')}
-                    />
-                    <Badge 
-                      variant="default"
-                      className="cursor-pointer bg-blue-600 hover:bg-blue-700"
-                      onClick={() => saveCustomOption('reasoning')}
+                        </DialogContent>
+                      </Dialog>
+                    )}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowCustomInputs(prev => ({ ...prev, [key]: !prev[key] }))}
                     >
-                      <Plus className="w-3 h-3 mr-1" /> Save
-                    </Badge>
+                      <Plus className="w-4 h-4" />
+                    </Button>
                   </div>
                 </div>
-              </div>
-              
-              <Textarea
-                value={reasoning}
-                onChange={(e) => setReasoning(e.target.value)}
-                placeholder="Why did you take this trade? What was your thesis?
-
-• Technical setup
-• Market conditions
-• Catalyst or news
-• Risk/reward ratio
-• Confluence factors"
-                className="min-h-[200px] resize-none"
-              />
-            </CardContent>
-          </Card>
-
-          <Card className="border-0 shadow-lg">
-            <CardHeader>
-              <CardTitle className="flex items-center space-x-2">
-                <Brain className="w-5 h-5 text-purple-600" />
-                <span>Emotional State & Psychology</span>
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  className="ml-auto text-xs"
-                  onClick={() => setShowAiSuggestions(!showAiSuggestions)}
-                >
-                  <Lightbulb className="w-3 h-3 mr-1" />
-                  AI Help
-                </Button>
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {showAiSuggestions && (
-                <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200 text-sm text-blue-800">
-                  <div className="flex items-start">
-                    <Lightbulb className="w-4 h-4 text-blue-600 mt-0.5 mr-2 flex-shrink-0" />
-                    <p>{aiSuggestions.emotions}</p>
-                  </div>
-                </div>
-              )}
-              
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-slate-700 mb-2">Quick Options</label>
-                <div className="flex flex-wrap gap-2 mb-4">
-                  {/* System predefined options */}
-                  <div className="w-full mb-2">
-                    <h5 className="text-xs font-medium text-slate-500 mb-1 flex items-center">
-                      <Settings className="w-3 h-3 mr-1" /> System Options
-                    </h5>
-                    <div className="flex flex-wrap gap-2">
-                      {predefinedOptions.emotions.map((option, index) => (
-                        <Badge 
-                          key={index}
-                          variant="outline"
-                          className="cursor-pointer hover:bg-purple-50"
-                          onClick={() => addOptionToField('emotions', option)}
-                        >
-                          + {option}
-                        </Badge>
-                      ))}
+                {showCustomInputs[key] && (
+                  <div className="mt-3 p-3 bg-blue-50 rounded-lg">
+                    <div className="flex space-x-2">
+                      <Input
+                        placeholder={`Add custom ${title.toLowerCase()} option...`}
+                        onKeyPress={(e) => {
+                          if (e.key === 'Enter') {
+                            const value = (e.target as HTMLInputElement).value;
+                            if (value.trim()) {
+                              addCustomOption(key, value.trim());
+                              (e.target as HTMLInputElement).value = '';
+                            }
+                          }
+                        }}
+                      />
+                      <Button
+                        size="sm"
+                        onClick={() => setShowCustomInputs(prev => ({ ...prev, [key]: false }))}
+                      >
+                        <X className="w-4 h-4" />
+                      </Button>
                     </div>
+                    <p className="text-xs text-blue-600 mt-2">
+                      Press Enter to save this option for future use across all trades
+                    </p>
                   </div>
-                  
-                  {/* User's custom saved options */}
-                  {savedOptions.emotions && savedOptions.emotions.length > 0 && (
-                    <div className="w-full">
-                      <h5 className="text-xs font-medium text-slate-500 mb-1 flex items-center">
-                        <Star className="w-3 h-3 mr-1 text-amber-500" /> My Saved Options
-                      </h5>
-                      <div className="flex flex-wrap gap-2">
-                        {savedOptions.emotions.map((option, index) => (
-                          <div key={index} className="flex items-center">
-                            <Badge 
-                              variant="default"
-                              className="cursor-pointer bg-amber-100 text-amber-800 hover:bg-amber-200"
-                              onClick={() => addOptionToField('emotions', option)}
-                            >
-                              + {option}
-                            </Badge>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-5 w-5 p-0 ml-1 text-slate-400 hover:text-red-500"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                removeCustomOption('emotions', option);
-                              }}
-                            >
-                              <X className="h-3 w-3" />
-                            </Button>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  
-                  {/* Add new custom option */}
-                  <div className="w-full mt-2 flex items-center space-x-2">
-                    <Input
-                      value={newCustomOption.emotions}
-                      onChange={(e) => setNewCustomOption({...newCustomOption, emotions: e.target.value})}
-                      placeholder="Add your own custom option..."
-                      className="flex-1"
-                      onKeyPress={(e) => e.key === 'Enter' && saveCustomOption('emotions')}
-                    />
-                    <Badge 
-                      variant="default"
-                      className="cursor-pointer bg-purple-600 hover:bg-purple-700"
-                      onClick={() => saveCustomOption('emotions')}
-                    >
-                      <Plus className="w-3 h-3 mr-1" /> Save
-                    </Badge>
-                  </div>
-                </div>
-              </div>
-              
-              <Textarea
-                value={emotions}
-                onChange={(e) => setEmotions(e.target.value)}
-                placeholder="How were you feeling during this trade?
-
-• Pre-trade emotions
-• During the trade
-• After exit
-• Stress level (1-10)
-• Confidence level
-• Any biases at play?"
-                className="min-h-[200px] resize-none"
-              />
-            </CardContent>
-          </Card>
-
-          <Card className="border-0 shadow-lg">
-            <CardHeader>
-              <CardTitle className="flex items-center space-x-2">
-                <CheckCircle className="w-5 h-5 text-green-600" />
-                <span>Key Lessons & What Worked</span>
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  className="ml-auto text-xs"
-                  onClick={() => setShowAiSuggestions(!showAiSuggestions)}
-                >
-                  <Lightbulb className="w-3 h-3 mr-1" />
-                  AI Help
-                </Button>
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {showAiSuggestions && (
-                <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200 text-sm text-blue-800">
-                  <div className="flex items-start">
-                    <Lightbulb className="w-4 h-4 text-blue-600 mt-0.5 mr-2 flex-shrink-0" />
-                    <p>{aiSuggestions.lessons}</p>
-                  </div>
-                </div>
-              )}
-              
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-slate-700 mb-2">Quick Options</label>
-                <div className="flex flex-wrap gap-2 mb-4">
-                  {/* System predefined options */}
-                  <div className="w-full mb-2">
-                    <h5 className="text-xs font-medium text-slate-500 mb-1 flex items-center">
-                      <Settings className="w-3 h-3 mr-1" /> System Options
-                    </h5>
-                    <div className="flex flex-wrap gap-2">
-                      {predefinedOptions.lessons.map((option, index) => (
-                        <Badge 
-                          key={index}
-                          variant="outline"
-                          className="cursor-pointer hover:bg-green-50"
-                          onClick={() => addOptionToField('lessons', option)}
-                        >
-                          + {option}
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-                  
-                  {/* User's custom saved options */}
-                  {savedOptions.lessons && savedOptions.lessons.length > 0 && (
-                    <div className="w-full">
-                      <h5 className="text-xs font-medium text-slate-500 mb-1 flex items-center">
-                        <Star className="w-3 h-3 mr-1 text-amber-500" /> My Saved Options
-                      </h5>
-                      <div className="flex flex-wrap gap-2">
-                        {savedOptions.lessons.map((option, index) => (
-                          <div key={index} className="flex items-center">
-                            <Badge 
-                              variant="default"
-                              className="cursor-pointer bg-amber-100 text-amber-800 hover:bg-amber-200"
-                              onClick={() => addOptionToField('lessons', option)}
-                            >
-                              + {option}
-                            </Badge>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-5 w-5 p-0 ml-1 text-slate-400 hover:text-red-500"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                removeCustomOption('lessons', option);
-                              }}
-                            >
-                              <X className="h-3 w-3" />
-                            </Button>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  
-                  {/* Add new custom option */}
-                  <div className="w-full mt-2 flex items-center space-x-2">
-                    <Input
-                      value={newCustomOption.lessons}
-                      onChange={(e) => setNewCustomOption({...newCustomOption, lessons: e.target.value})}
-                      placeholder="Add your own custom option..."
-                      className="flex-1"
-                      onKeyPress={(e) => e.key === 'Enter' && saveCustomOption('lessons')}
-                    />
-                    <Badge 
-                      variant="default"
-                      className="cursor-pointer bg-green-600 hover:bg-green-700"
-                      onClick={() => saveCustomOption('lessons')}
-                    >
-                      <Plus className="w-3 h-3 mr-1" /> Save
-                    </Badge>
-                  </div>
-                </div>
-              </div>
-              
-              <Textarea
-                value={lessons}
-                onChange={(e) => setLessons(e.target.value)}
-                placeholder="What did you learn from this trade?
-
-• What worked well?
-• Market insights gained
-• Strategy refinements
-• Personal growth
-• Future applications"
-                className="min-h-[200px] resize-none"
-              />
-            </CardContent>
-          </Card>
-
-          <Card className="border-0 shadow-lg">
-            <CardHeader>
-              <CardTitle className="flex items-center space-x-2">
-                <AlertCircle className="w-5 h-5 text-red-600" />
-                <span>Mistakes & Areas for Improvement</span>
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  className="ml-auto text-xs"
-                  onClick={() => setShowAiSuggestions(!showAiSuggestions)}
-                >
-                  <Lightbulb className="w-3 h-3 mr-1" />
-                  AI Help
-                </Button>
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {showAiSuggestions && (
-                <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200 text-sm text-blue-800">
-                  <div className="flex items-start">
-                    <Lightbulb className="w-4 h-4 text-blue-600 mt-0.5 mr-2 flex-shrink-0" />
-                    <p>{aiSuggestions.mistakes}</p>
-                  </div>
-                </div>
-              )}
-              
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-slate-700 mb-2">Quick Options</label>
-                <div className="flex flex-wrap gap-2 mb-4">
-                  {/* System predefined options */}
-                  <div className="w-full mb-2">
-                    <h5 className="text-xs font-medium text-slate-500 mb-1 flex items-center">
-                      <Settings className="w-3 h-3 mr-1" /> System Options
-                    </h5>
-                    <div className="flex flex-wrap gap-2">
-                      {predefinedOptions.mistakes.map((option, index) => (
-                        <Badge 
-                          key={index}
-                          variant="outline"
-                          className="cursor-pointer hover:bg-red-50"
-                          onClick={() => addOptionToField('mistakes', option)}
-                        >
-                          + {option}
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-                  
-                  {/* User's custom saved options */}
-                  {savedOptions.mistakes && savedOptions.mistakes.length > 0 && (
-                    <div className="w-full">
-                      <h5 className="text-xs font-medium text-slate-500 mb-1 flex items-center">
-                        <Star className="w-3 h-3 mr-1 text-amber-500" /> My Saved Options
-                      </h5>
-                      <div className="flex flex-wrap gap-2">
-                        {savedOptions.mistakes.map((option, index) => (
-                          <div key={index} className="flex items-center">
-                            <Badge 
-                              variant="default"
-                              className="cursor-pointer bg-amber-100 text-amber-800 hover:bg-amber-200"
-                              onClick={() => addOptionToField('mistakes', option)}
-                            >
-                              + {option}
-                            </Badge>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-5 w-5 p-0 ml-1 text-slate-400 hover:text-red-500"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                removeCustomOption('mistakes', option);
-                              }}
-                            >
-                              <X className="h-3 w-3" />
-                            </Button>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  
-                  {/* Add new custom option */}
-                  <div className="w-full mt-2 flex items-center space-x-2">
-                    <Input
-                      value={newCustomOption.mistakes}
-                      onChange={(e) => setNewCustomOption({...newCustomOption, mistakes: e.target.value})}
-                      placeholder="Add your own custom option..."
-                      className="flex-1"
-                      onKeyPress={(e) => e.key === 'Enter' && saveCustomOption('mistakes')}
-                    />
-                    <Badge 
-                      variant="default"
-                      className="cursor-pointer bg-red-600 hover:bg-red-700"
-                      onClick={() => saveCustomOption('mistakes')}
-                    >
-                      <Plus className="w-3 h-3 mr-1" /> Save
-                    </Badge>
-                  </div>
-                </div>
-              </div>
-              
-              <Textarea
-                value={mistakes}
-                onChange={(e) => setMistakes(e.target.value)}
-                placeholder="What could you have done better?
-
-• Entry timing issues
-• Exit mistakes
-• Risk management errors
-• Emotional decisions
-• Plan deviations
-• Next time improvements"
-                className="min-h-[200px] resize-none"
-              />
-            </CardContent>
-          </Card>
+                )}
+              </CardHeader>
+              <CardContent>
+                <Textarea
+                  value={
+                    key === 'reasoning' ? reasoning :
+                    key === 'emotions' ? emotions :
+                    key === 'lessons' ? lessons :
+                    mistakes
+                  }
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    if (key === 'reasoning') setReasoning(value);
+                    else if (key === 'emotions') setEmotions(value);
+                    else if (key === 'lessons') setLessons(value);
+                    else setMistakes(value);
+                  }}
+                  placeholder={placeholder}
+                  className="min-h-[200px] resize-none"
+                />
+              </CardContent>
+            </Card>
+          ))}
         </div>
 
         {/* Custom Fields Section */}
