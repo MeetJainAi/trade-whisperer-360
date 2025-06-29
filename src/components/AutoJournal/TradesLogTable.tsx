@@ -43,7 +43,17 @@ import {
   FileUp,
   Percent,
   Wallet,
-  BadgeDollarSign
+  BadgeDollarSign,
+  Check,
+  Plus,
+  Hash,
+  Tags,
+  Minus,
+  Trophy,
+  AlertTriangle,
+  ActivitySquare,
+  AlertCircle,
+  PieChart
 } from "lucide-react";
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
@@ -2033,12 +2043,5 @@ const TradesLogTable = ({ trades }: TradesLogTableProps) => {
     </div>
   );
 };
-
-// For TypeScript to understand these additional icon components
-const Hash = ChevronDown;
-const Tags = ChevronDown;
-const Minus = ChevronDown;
-const Trophy = ChevronDown;
-const ActivitySquare = ChevronDown;
 
 export default TradesLogTable;
