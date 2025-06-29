@@ -674,12 +674,15 @@ const TradeNotes = () => {
                 
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-2">Playbook Used</label>
-                  <Select value={playbookId} onValueChange={setPlaybookId}>
+                  <Select 
+                    value={playbookId || "none"} 
+                    onValueChange={(value) => setPlaybookId(value === "none" ? "" : value)}
+                  >
                     <SelectTrigger>
                       <SelectValue placeholder="Select playbook (optional)" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">No Playbook</SelectItem>
+                      <SelectItem value="none">No Playbook</SelectItem>
                       {playbooks?.map((playbook) => (
                         <SelectItem key={playbook.id} value={playbook.id}>
                           <div className="flex items-center space-x-2">
