@@ -1,4 +1,3 @@
-
 import { useState } from 'react';
 import { useAuth } from '@/components/AuthProvider';
 import { supabase } from '@/integrations/supabase/client';
@@ -10,6 +9,7 @@ import JournalUploadSection from '@/components/JournalDetail/JournalUploadSectio
 import JournalLoadingView from '@/components/JournalDetail/JournalLoadingView';
 import JournalErrorView from '@/components/JournalDetail/JournalErrorView';
 import JournalDashboard from '@/components/JournalDetail/JournalDashboard';
+import QuickEntryButton from '@/components/TradeJournal/QuickEntryButton';
 
 type TradeSessionWithTrades = Tables<'trade_sessions'> & { trades: Tables<'trades'>[] };
 type Journal = Tables<'journals'>;
@@ -21,9 +21,10 @@ const JournalDetail = () => {
   console.log('JournalDetail render - journalId:', journalId, 'user:', user?.id);
 
   const [showUploadView, setShowUploadView] = useState(false);
+  const [showQuickEntry, setShowQuickEntry] = useState(false);
 
   // Fetch journal and sessions in parallel to avoid waterfall
-  const { data: journalData, isLoading: isJournalLoading, error: journalError } = useQuery<{
+  const { data: journalData, isLoading: isJournalLoading, error: journalError, refetch } = useQuery<{
     journal: Journal;
     sessions: TradeSessionWithTrades[];
   }>({
@@ -71,8 +72,14 @@ const JournalDetail = () => {
     journalError,
     journal: !!journalData?.journal,
     sessionsCount: journalData?.sessions.length,
-    showUploadView
+    showUploadView,
+    showQuickEntry
   });
+
+  const handleTradeAdded = () => {
+    refetch();
+    setShowQuickEntry(false);
+  };
 
   if (isJournalLoading) {
     return <JournalLoadingView />;
@@ -88,13 +95,76 @@ const JournalDetail = () => {
 
   const { journal, sessions } = journalData;
 
-  if (showUploadView || !sessions || sessions.length === 0) {
-    console.log('Showing upload view');
-    return <JournalUploadSection journal={journal} onUploadComplete={() => setShowUploadView(false)} />;
+  if (showUploadView || showQuickEntry) {
+    return (
+      <div className="container mx-auto px-4 py-6">
+        {showUploadView ? (
+          <JournalUploadSection journal={journal} onUploadComplete={() => setShowUploadView(false)} />
+        ) : (
+          <div className="max-w-4xl mx-auto">
+            <h2 className="text-2xl font-bold mb-6">Add Trade to {journal.name}</h2>
+            <QuickEntryButton 
+              journalId={journal.id} 
+              onTradeAdded={handleTradeAdded} 
+            />
+          </div>
+        )}
+      </div>
+    );
   }
 
-  console.log('Showing journal dashboard');
-  return <JournalDashboard journal={journal} sessions={sessions} onUploadNew={() => setShowUploadView(true)} />;
+  if (!sessions || sessions.length === 0) {
+    return (
+      <div className="container mx-auto px-4 py-8">
+        <div className="max-w-4xl mx-auto">
+          <div className="bg-white rounded-lg shadow-lg p-8 text-center mb-8">
+            <h2 className="text-2xl font-bold text-gray-800 mb-4">Welcome to {journal.name}</h2>
+            <p className="text-gray-600 mb-8">Let's get started by adding your first trading session data.</p>
+            
+            <div className="grid md:grid-cols-2 gap-8">
+              <div className="p-6 bg-gradient-to-r from-blue-50 to-blue-100 rounded-lg text-left">
+                <h3 className="font-bold text-blue-800 mb-3 flex items-center">
+                  <FileSpreadsheet className="w-5 h-5 mr-2" />
+                  Import CSV Data
+                </h3>
+                <p className="text-blue-700 mb-4 text-sm">
+                  Upload a CSV file from your broker for comprehensive analysis of your trades.
+                </p>
+                <Button 
+                  onClick={() => setShowUploadView(true)}
+                  className="bg-blue-600 hover:bg-blue-700"
+                >
+                  Upload CSV
+                </Button>
+              </div>
+              
+              <div className="p-6 bg-gradient-to-r from-green-50 to-green-100 rounded-lg text-left">
+                <h3 className="font-bold text-green-800 mb-3 flex items-center">
+                  <PencilLine className="w-5 h-5 mr-2" />
+                  Manual Entry
+                </h3>
+                <p className="text-green-700 mb-4 text-sm">
+                  Manually add individual trades with our simple form.
+                </p>
+                <Button 
+                  onClick={() => setShowQuickEntry(true)} 
+                  className="bg-green-600 hover:bg-green-700"
+                >
+                  Add Trade Manually
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return <JournalDashboard 
+    journal={journal} 
+    sessions={sessions} 
+    onUploadNew={() => setShowUploadView(true)} 
+  />;
 };
 
 export default JournalDetail;

@@ -12,7 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { toast } from '@/components/ui/use-toast';
 import { Badge } from '@/components/ui/badge';
 import { Tables, TablesInsert } from '@/integrations/supabase/types';
-import { PlusCircle, Trash2, Settings, BarChart3, ChevronRight, TrendingUp, ArrowUpRight } from 'lucide-react';
+import { PlusCircle, Trash2, Settings, BarChart3, ChevronRight, TrendingUp, ArrowUpRight, FileSpreadsheet, PencilLine } from 'lucide-react';
 
 type Journal = Tables<'journals'>;
 
@@ -130,7 +130,7 @@ const Journals = () => {
                             </div>
                             <div>
                                 <h1 className="text-2xl font-bold text-slate-800">Trading Journals</h1>
-                                <p className="text-sm text-slate-600">Organize and analyze your trades</p>
+                                <p className="text-sm text-slate-600">Organize and analyze your trades by account</p>
                             </div>
                         </div>
                         <Button
@@ -148,7 +148,7 @@ const Journals = () => {
                 <div className="mb-6 flex justify-between items-center">
                     <div>
                         <h2 className="text-xl font-bold text-slate-800">My Journals</h2>
-                        <p className="text-slate-600">Organize your trades by account, strategy, or prop firm</p>
+                        <p className="text-slate-600">Create separate journals for different accounts or trading strategies</p>
                     </div>
                     <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
                         <DialogTrigger asChild>
@@ -199,6 +199,38 @@ const Journals = () => {
                     </Dialog>
                 </div>
                 
+                <div className="mb-8">
+                    <div className="bg-white border rounded-lg p-4 shadow-sm">
+                        <h3 className="font-medium mb-4 flex items-center text-blue-700">
+                            <Info className="w-4 h-4 mr-2" />
+                            How to Use Trading Journals
+                        </h3>
+                        <div className="grid md:grid-cols-3 gap-4 text-sm">
+                            <div className="space-y-2">
+                                <div className="flex items-center">
+                                    <div className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center mr-2 font-bold">1</div>
+                                    <p className="font-medium text-slate-800">Create separate journals</p>
+                                </div>
+                                <p className="text-slate-600 pl-8">Use different journals for separate trading accounts, strategies, or time periods</p>
+                            </div>
+                            <div className="space-y-2">
+                                <div className="flex items-center">
+                                    <div className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center mr-2 font-bold">2</div>
+                                    <p className="font-medium text-slate-800">Record your trades</p>
+                                </div>
+                                <p className="text-slate-600 pl-8">Upload CSV files from your broker or manually add individual trades</p>
+                            </div>
+                            <div className="space-y-2">
+                                <div className="flex items-center">
+                                    <div className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center mr-2 font-bold">3</div>
+                                    <p className="font-medium text-slate-800">Analyze performance</p>
+                                </div>
+                                <p className="text-slate-600 pl-8">Review metrics, identify patterns, and improve your trading strategy</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
                 {isLoading ? (
                     <div className="grid grid-cols-1 gap-4 animate-pulse">
                         {[1, 2, 3].map(i => (
@@ -208,7 +240,7 @@ const Journals = () => {
                 ) : journals && journals.length > 0 ? (
                     <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
                         {journals.map((journal) => (
-                            <Card key={journal.id} className="border-0 shadow-lg hover:shadow-xl transition-all duration-300">
+                            <Card key={journal.id} className="border-0 shadow-lg hover:shadow-xl transition-all duration-300 cursor-pointer" onClick={() => navigate(`/journals/${journal.id}`)}>
                                 <CardHeader className="pb-2 border-b">
                                     <div className="flex justify-between items-center">
                                         <CardTitle className="text-lg font-bold text-slate-800">{journal.name}</CardTitle>
@@ -274,19 +306,44 @@ const Journals = () => {
                                             </div>
                                         </div>
                                     )}
+                                    
+                                    <div className="flex justify-between items-center mt-2">
+                                        <div className="flex space-x-1">
+                                            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                                                <FileSpreadsheet className="w-3 h-3 mr-1" />
+                                                Import
+                                            </Badge>
+                                            <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
+                                                <PencilLine className="w-3 h-3 mr-1" />
+                                                Manual
+                                            </Badge>
+                                        </div>
+                                        <Button 
+                                            size="sm"
+                                            variant="ghost"
+                                            className="text-blue-600 hover:text-blue-800 hover:bg-blue-50 -mr-2"
+                                        >
+                                            View Details
+                                            <ArrowUpRight className="w-3 h-3 ml-1" />
+                                        </Button>
+                                    </div>
                                 </CardContent>
-                                <CardFooter className="pt-0">
-                                    <Button 
-                                        onClick={() => navigate(`/journals/${journal.id}`)}
-                                        className="w-full"
-                                        variant="outline"
-                                    >
-                                        <span>View Journal</span>
-                                        <ChevronRight className="ml-2 h-4 w-4" />
-                                    </Button>
-                                </CardFooter>
                             </Card>
                         ))}
+                        
+                        {/* Add New Journal Card */}
+                        <Card 
+                            className="border-2 border-dashed border-slate-300 hover:border-blue-400 transition-colors shadow-md hover:shadow-lg cursor-pointer flex flex-col items-center justify-center p-6 text-center"
+                            onClick={() => setIsCreateDialogOpen(true)}
+                        >
+                            <div className="w-16 h-16 rounded-full bg-blue-100 flex items-center justify-center mb-4">
+                                <PlusCircle className="w-8 h-8 text-blue-600" />
+                            </div>
+                            <h3 className="text-lg font-semibold text-slate-800 mb-2">Create New Journal</h3>
+                            <p className="text-sm text-slate-600">
+                                Add another account or trading strategy
+                            </p>
+                        </Card>
                     </div>
                 ) : (
                     <Card className="border-0 shadow-lg">

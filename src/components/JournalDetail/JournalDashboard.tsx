@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ArrowLeft, Upload, TrendingUp, TrendingDown, MoreHorizontal, Edit, Trash2, Eye, Calendar, DollarSign, Target, BarChart3 } from 'lucide-react';
+import { ArrowLeft, Upload, TrendingUp, TrendingDown, MoreHorizontal, Edit, Trash2, Eye, Calendar, DollarSign, Target, BarChart3, Filter, Download, Plus, FileSpreadsheet, FileUp, ChevronRight } from 'lucide-react';
 import { Tables } from '@/integrations/supabase/types';
 import { calculateMetrics } from '@/lib/trade-metrics';
 import { useMemo, useState } from 'react';
@@ -14,6 +14,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from '@/components/ui/use-toast';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import CalendarView from '@/components/CalendarView';
+import JournalMetricsCard from '@/components/JournalDetail/JournalMetricsCard';
+import JournalStatsCard from '@/components/JournalDetail/JournalStatsCard';
 
 type TradeSessionWithTrades = Tables<'trade_sessions'> & { trades: Tables<'trades'>[] };
 type Journal = Tables<'journals'>;
@@ -29,12 +31,38 @@ const JournalDashboard = ({ journal, sessions, onUploadNew }: JournalDashboardPr
   const queryClient = useQueryClient();
   const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState('sessions');
+  const [filterPeriod, setFilterPeriod] = useState<'all' | 'week' | 'month' | 'quarter'>('all');
 
   const aggregatedMetrics = useMemo(() => {
     const allTrades = sessions.flatMap(session => session.trades);
     if (allTrades.length === 0) return null;
     return calculateMetrics(allTrades);
   }, [sessions]);
+
+  // Filter sessions based on the selected period
+  const filteredSessions = useMemo(() => {
+    if (filterPeriod === 'all') return sessions;
+    
+    const now = new Date();
+    let cutoffDate = new Date();
+    
+    if (filterPeriod === 'week') {
+      cutoffDate.setDate(now.getDate() - 7);
+    } else if (filterPeriod === 'month') {
+      cutoffDate.setMonth(now.getMonth() - 1);
+    } else if (filterPeriod === 'quarter') {
+      cutoffDate.setMonth(now.getMonth() - 3);
+    }
+    
+    return sessions.filter(session => new Date(session.created_at) >= cutoffDate);
+  }, [sessions, filterPeriod]);
+
+  // Calculate period metrics
+  const periodMetrics = useMemo(() => {
+    const periodTrades = filteredSessions.flatMap(session => session.trades);
+    if (periodTrades.length === 0) return null;
+    return calculateMetrics(periodTrades);
+  }, [filteredSessions]);
 
   const deleteSessionMutation = useMutation({
     mutationFn: async (sessionId: string) => {
@@ -65,28 +93,57 @@ const JournalDashboard = ({ journal, sessions, onUploadNew }: JournalDashboardPr
   };
 
   const formatCurrency = (value: number) => {
-    const formatted = new Intl.NumberFormat('en-US', {
+    return new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency: 'USD',
       minimumFractionDigits: 2,
-    }).format(Math.abs(value));
-    return value >= 0 ? `+${formatted}` : `-${formatted}`;
-  };
-
-  const formatPercentage = (value: number) => {
-    return `${value.toFixed(1)}%`;
-  };
-
-  const getPnLBadgeVariant = (pnl: number) => {
-    if (pnl > 0) return 'default';
-    if (pnl < 0) return 'destructive';
-    return 'secondary';
+      maximumFractionDigits: 2
+    }).format(value);
   };
 
   const getWinRateColor = (winRate: number) => {
     if (winRate >= 70) return 'text-green-600';
     if (winRate >= 50) return 'text-yellow-600';
     return 'text-red-600';
+  };
+
+  const exportJournalData = async () => {
+    try {
+      // Get all trades for this journal
+      const { data: allTrades, error } = await supabase
+        .from('trades')
+        .select('*')
+        .eq('journal_id', journal.id)
+        .order('datetime', { ascending: false });
+        
+      if (error) throw error;
+      
+      if (!allTrades || allTrades.length === 0) {
+        toast({ title: "No data", description: "No trades to export for this journal", variant: "default" });
+        return;
+      }
+      
+      // Convert to CSV
+      const headers = Object.keys(allTrades[0]).join(',');
+      const rows = allTrades.map(trade => Object.values(trade).join(','));
+      const csv = [headers, ...rows].join('\n');
+      
+      // Create download
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${journal.name.replace(/\s+/g, '_')}_trades_${new Date().toISOString().split('T')[0]}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+      toast({ title: "Export successful", description: `Exported ${allTrades.length} trades to CSV` });
+    } catch (error: any) {
+      console.error("Export error:", error);
+      toast({ title: "Export failed", description: error.message, variant: "destructive" });
+    }
   };
 
   return (
@@ -112,88 +169,159 @@ const JournalDashboard = ({ journal, sessions, onUploadNew }: JournalDashboardPr
                 <div>
                   <h1 className="text-2xl font-bold text-slate-800">{journal.name}</h1>
                   <p className="text-slate-600 text-sm">
-                    {journal.description || 'Trading Journal Dashboard'} • {sessions.length} sessions
+                    {journal.description || 'Trading Journal Dashboard'} • {sessions.length} sessions • {aggregatedMetrics?.total_trades || 0} trades
                   </p>
                 </div>
               </div>
             </div>
-            <Button 
-              onClick={onUploadNew} 
-              className="bg-gradient-to-r from-blue-600 to-green-500 hover:from-blue-700 hover:to-green-600 shadow-lg"
-              aria-label="Upload new trading session"
-            >
-              <Upload className="mr-2 h-4 w-4" />
-              Upload New Session
-            </Button>
+            <div className="flex gap-2">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" className="border-slate-300">
+                    <FileUp className="mr-2 h-4 w-4" />
+                    Import/Export
+                    <ChevronRight className="ml-2 h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuItem onClick={onUploadNew}>
+                    <FileSpreadsheet className="mr-2 h-4 w-4" />
+                    Import CSV
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={exportJournalData}>
+                    <Download className="mr-2 h-4 w-4" />
+                    Export Journal Data
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              
+              <Button 
+                onClick={onUploadNew} 
+                className="bg-gradient-to-r from-blue-600 to-green-500 hover:from-blue-700 hover:to-green-600 shadow-lg"
+                aria-label="Upload new trading session"
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                New Session
+              </Button>
+            </div>
           </div>
         </div>
       </header>
 
       <div className="container mx-auto px-4 py-8">
-        {/* Enhanced Metrics Overview */}
+        {/* Journal Overview Cards */}
         {aggregatedMetrics && (
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-            <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
-                <CardTitle className="text-sm font-medium text-slate-600">Total P&L</CardTitle>
-                {aggregatedMetrics.total_pnl >= 0 ? (
-                  <TrendingUp className="h-5 w-5 text-green-600" />
-                ) : (
-                  <TrendingDown className="h-5 w-5 text-red-600" />
-                )}
-              </CardHeader>
-              <CardContent>
-                <div className={`text-3xl font-bold ${aggregatedMetrics.total_pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                  {formatCurrency(aggregatedMetrics.total_pnl)}
-                </div>
-                <p className="text-xs text-slate-500 mt-1">
-                  Across {aggregatedMetrics.total_trades} trades
-                </p>
-              </CardContent>
-            </Card>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            <JournalMetricsCard
+              title="Net P&L"
+              value={aggregatedMetrics.total_pnl}
+              isPositive={aggregatedMetrics.total_pnl >= 0}
+              icon={DollarSign}
+              description={`Across ${aggregatedMetrics.total_trades} trades`}
+            />
+            
+            <JournalMetricsCard
+              title="Win Rate"
+              value={aggregatedMetrics.win_rate}
+              format="percent"
+              icon={Target}
+              description={`${aggregatedMetrics.profit_factor.toFixed(2)} profit factor`}
+              valueColor={getWinRateColor(aggregatedMetrics.win_rate)}
+            />
+            
+            <JournalMetricsCard
+              title="Reward/Risk"
+              value={aggregatedMetrics.reward_risk_ratio}
+              format="ratio"
+              icon={TrendingUp}
+              description={`${formatCurrency(aggregatedMetrics.avg_win)} : ${formatCurrency(Math.abs(aggregatedMetrics.avg_loss))}`}
+            />
+            
+            <JournalMetricsCard
+              title="Expectancy"
+              value={aggregatedMetrics.expectancy}
+              isPositive={aggregatedMetrics.expectancy >= 0}
+              icon={DollarSign}
+              description="Average $ per trade"
+            />
+          </div>
+        )}
 
-            <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
-                <CardTitle className="text-sm font-medium text-slate-600">Win Rate</CardTitle>
-                <Target className="h-5 w-5 text-blue-600" />
-              </CardHeader>
-              <CardContent>
-                <div className={`text-3xl font-bold ${getWinRateColor(aggregatedMetrics.win_rate)}`}>
-                  {formatPercentage(aggregatedMetrics.win_rate)}
-                </div>
-                <p className="text-xs text-slate-500 mt-1">
-                  Success rate
-                </p>
-              </CardContent>
-            </Card>
+        {/* Period Filter */}
+        <div className="flex justify-end mb-4">
+          <div className="inline-flex rounded-md shadow-sm">
+            <Button 
+              variant={filterPeriod === 'all' ? 'default' : 'outline'} 
+              size="sm" 
+              onClick={() => setFilterPeriod('all')}
+              className="rounded-l-md rounded-r-none"
+            >
+              All Time
+            </Button>
+            <Button 
+              variant={filterPeriod === 'quarter' ? 'default' : 'outline'} 
+              size="sm" 
+              onClick={() => setFilterPeriod('quarter')}
+              className="rounded-none border-l-0 border-r-0"
+            >
+              Last 3 Months
+            </Button>
+            <Button 
+              variant={filterPeriod === 'month' ? 'default' : 'outline'} 
+              size="sm" 
+              onClick={() => setFilterPeriod('month')}
+              className="rounded-none border-r-0"
+            >
+              Last Month
+            </Button>
+            <Button 
+              variant={filterPeriod === 'week' ? 'default' : 'outline'} 
+              size="sm" 
+              onClick={() => setFilterPeriod('week')}
+              className="rounded-r-md rounded-l-none"
+            >
+              Last Week
+            </Button>
+          </div>
+        </div>
 
-            <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
-                <CardTitle className="text-sm font-medium text-slate-600">Total Trades</CardTitle>
-                <BarChart3 className="h-5 w-5 text-purple-600" />
+        {/* Period Stats Summary */}
+        {periodMetrics && filterPeriod !== 'all' && (
+          <div className="mb-6">
+            <Card className="border-0 shadow-lg">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-lg flex items-center">
+                  <Calendar className="w-5 h-5 text-blue-600 mr-2" />
+                  {filterPeriod === 'week' ? 'Last 7 Days' : 
+                   filterPeriod === 'month' ? 'Last 30 Days' : 'Last 3 Months'} Performance
+                </CardTitle>
+                <CardDescription>
+                  {filteredSessions.length} trading sessions • {periodMetrics.total_trades} trades
+                </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="text-3xl font-bold text-slate-800">
-                  {aggregatedMetrics.total_trades}
+                <div className="grid grid-cols-4 gap-4">
+                  <JournalStatsCard 
+                    label="P&L" 
+                    value={formatCurrency(periodMetrics.total_pnl)}
+                    isPositive={periodMetrics.total_pnl > 0}
+                  />
+                  <JournalStatsCard 
+                    label="Win Rate" 
+                    value={`${periodMetrics.win_rate.toFixed(1)}%`}
+                    isPositive={periodMetrics.win_rate >= 50}
+                  />
+                  <JournalStatsCard 
+                    label="Profit Factor" 
+                    value={periodMetrics.profit_factor >= 9999 ? '∞' : periodMetrics.profit_factor.toFixed(2)}
+                    isPositive={periodMetrics.profit_factor >= 1.5}
+                  />
+                  <JournalStatsCard 
+                    label="Avg Trade" 
+                    value={formatCurrency(periodMetrics.expectancy)}
+                    isPositive={periodMetrics.expectancy > 0}
+                  />
                 </div>
-                <p className="text-xs text-slate-500 mt-1">
-                  Executed positions
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
-                <CardTitle className="text-sm font-medium text-slate-600">Profit Factor</CardTitle>
-                <DollarSign className="h-5 w-5 text-amber-600" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-3xl font-bold text-slate-800">
-                  {aggregatedMetrics.profit_factor >= 9999 ? '∞' : aggregatedMetrics.profit_factor.toFixed(2)}
-                </div>
-                <p className="text-xs text-slate-500 mt-1">
-                  Risk-reward ratio
-                </p>
               </CardContent>
             </Card>
           </div>
@@ -204,11 +332,11 @@ const JournalDashboard = ({ journal, sessions, onUploadNew }: JournalDashboardPr
           <TabsList className="grid w-full max-w-md grid-cols-2">
             <TabsTrigger value="sessions" className="flex items-center gap-2">
               <BarChart3 className="w-4 h-4" />
-              Sessions
+              Trading Sessions
             </TabsTrigger>
             <TabsTrigger value="calendar" className="flex items-center gap-2">
               <Calendar className="w-4 h-4" />
-              Calendar
+              Calendar View
             </TabsTrigger>
           </TabsList>
 
@@ -223,26 +351,60 @@ const JournalDashboard = ({ journal, sessions, onUploadNew }: JournalDashboardPr
                       Trading Sessions
                     </CardTitle>
                     <CardDescription className="text-slate-600 mt-1">
-                      Click on a session to view detailed analysis, edit, or delete entries.
+                      Click on a session to view detailed analysis, edit, or delete entries
                     </CardDescription>
                   </div>
-                  {sessions.length > 0 && (
-                    <Badge variant="outline" className="text-slate-600">
-                      {sessions.length} session{sessions.length !== 1 ? 's' : ''}
-                    </Badge>
-                  )}
+                  <div className="flex items-center space-x-2">
+                    {sessions.length > 0 && (
+                      <Badge variant="outline" className="text-slate-600">
+                        {filteredSessions.length} session{filteredSessions.length !== 1 ? 's' : ''}
+                      </Badge>
+                    )}
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="outline" size="sm" className="h-8 w-8 p-0">
+                          <Filter className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => setFilterPeriod('all')}>
+                          All Sessions
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => setFilterPeriod('quarter')}>
+                          Last 3 Months
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => setFilterPeriod('month')}>
+                          Last 30 Days
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => setFilterPeriod('week')}>
+                          Last 7 Days
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent>
-                {sessions.length === 0 ? (
+                {filteredSessions.length === 0 ? (
                   <div className="text-center py-12 border-2 border-dashed border-slate-200 rounded-lg bg-slate-50/50">
                     <BarChart3 className="w-12 h-12 text-slate-400 mx-auto mb-4" />
-                    <h3 className="text-lg font-semibold text-slate-700 mb-2">No Trading Sessions Yet</h3>
-                    <p className="text-slate-500 mb-6">Upload your first CSV file to start analyzing your trades.</p>
-                    <Button onClick={onUploadNew} className="bg-gradient-to-r from-blue-600 to-green-500 hover:from-blue-700 hover:to-green-600">
-                      <Upload className="mr-2 h-4 w-4" />
-                      Upload Trades Now
-                    </Button>
+                    <h3 className="text-lg font-semibold text-slate-700 mb-2">No Trading Sessions Found</h3>
+                    {filterPeriod !== 'all' ? (
+                      <>
+                        <p className="text-slate-500 mb-6">There are no sessions in the selected time period.</p>
+                        <Button onClick={() => setFilterPeriod('all')} variant="outline">
+                          View All Sessions
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-slate-500 mb-6">Upload your first CSV file to start analyzing your trades.</p>
+                        <Button onClick={onUploadNew} className="bg-gradient-to-r from-blue-600 to-green-500 hover:from-blue-700 hover:to-green-600">
+                          <Upload className="mr-2 h-4 w-4" />
+                          Upload Trades Now
+                        </Button>
+                      </>
+                    )}
                   </div>
                 ) : (
                   <div className="rounded-lg border border-slate-200 overflow-hidden">
@@ -251,21 +413,24 @@ const JournalDashboard = ({ journal, sessions, onUploadNew }: JournalDashboardPr
                         <TableRow className="border-b border-slate-200">
                           <TableHead className="font-semibold text-slate-700">Date</TableHead>
                           <TableHead className="font-semibold text-slate-700 text-center">Trades</TableHead>
-                          <TableHead className="font-semibold text-slate-700 text-right">P&L</TableHead>
                           <TableHead className="font-semibold text-slate-700 text-center">Win Rate</TableHead>
-                          <TableHead className="font-semibold text-slate-700">AI Insight</TableHead>
+                          <TableHead className="font-semibold text-slate-700 text-right">P&L</TableHead>
+                          <TableHead className="font-semibold text-slate-700">Performance</TableHead>
                           <TableHead className="font-semibold text-slate-700 text-center w-20">Actions</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {sessions.map((session, index) => {
+                        {filteredSessions.map((session, index) => {
                           const sessionMetrics = calculateMetrics(session.trades);
                           const isRecent = index < 3;
+                          const isProfitable = sessionMetrics.total_pnl > 0;
                           
                           return (
                             <TableRow 
                               key={session.id}
-                              className={`cursor-pointer transition-all duration-200 hover:bg-blue-50/50 ${isRecent ? 'bg-green-50/30' : ''}`}
+                              className={`cursor-pointer transition-all duration-200 hover:bg-blue-50/50 ${
+                                isRecent ? 'bg-green-50/30' : ''
+                              } ${isProfitable ? 'border-l-2 border-l-green-500' : 'border-l-2 border-l-red-500'}`}
                               onClick={() => handleSessionClick(session.id)}
                               role="button"
                               tabIndex={0}
@@ -275,10 +440,9 @@ const JournalDashboard = ({ journal, sessions, onUploadNew }: JournalDashboardPr
                                   handleSessionClick(session.id);
                                 }
                               }}
-                              aria-label={`View session from ${new Date(session.created_at).toLocaleDateString()}`}
                             >
                               <TableCell className="font-medium">
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center space-x-2">
                                   <div className="text-slate-800">
                                     {new Date(session.created_at).toLocaleDateString('en-US', {
                                       month: 'short',
@@ -304,22 +468,33 @@ const JournalDashboard = ({ journal, sessions, onUploadNew }: JournalDashboardPr
                                   {sessionMetrics.total_trades}
                                 </Badge>
                               </TableCell>
-                              <TableCell className="text-right">
-                                <Badge 
-                                  variant={getPnLBadgeVariant(sessionMetrics.total_pnl)}
-                                  className="font-mono font-semibold"
-                                >
-                                  {formatCurrency(sessionMetrics.total_pnl)}
-                                </Badge>
-                              </TableCell>
                               <TableCell className="text-center">
                                 <span className={`font-semibold ${getWinRateColor(sessionMetrics.win_rate)}`}>
-                                  {formatPercentage(sessionMetrics.win_rate)}
+                                  {sessionMetrics.win_rate.toFixed(1)}%
+                                </span>
+                              </TableCell>
+                              <TableCell className="text-right font-medium">
+                                <span className={`${sessionMetrics.total_pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                  {sessionMetrics.total_pnl >= 0 ? '+' : ''}
+                                  {formatCurrency(sessionMetrics.total_pnl)}
                                 </span>
                               </TableCell>
                               <TableCell className="max-w-xs">
-                                <div className="truncate text-slate-600 text-sm">
-                                  {session.ai_key_insight || 'Analysis pending...'}
+                                <div className="flex items-center">
+                                  <div className="w-full bg-slate-200 rounded-full h-2 mr-2">
+                                    <div 
+                                      className={`${sessionMetrics.profit_factor >= 2 ? 'bg-green-500' : 
+                                                    sessionMetrics.profit_factor >= 1 ? 'bg-yellow-500' : 
+                                                    'bg-red-500'} h-2 rounded-full`}
+                                      style={{ width: `${Math.min(100, sessionMetrics.profit_factor * 33.33)}%` }}
+                                    ></div>
+                                  </div>
+                                  <span className="text-xs font-medium whitespace-nowrap">
+                                    {sessionMetrics.profit_factor >= 9999 ? '∞' : sessionMetrics.profit_factor.toFixed(1)}x
+                                  </span>
+                                </div>
+                                <div className="truncate text-slate-600 text-xs">
+                                  {session.ai_key_insight ? session.ai_key_insight.substring(0, 50) + '...' : 'No AI insights'}
                                 </div>
                               </TableCell>
                               <TableCell className="text-center">
