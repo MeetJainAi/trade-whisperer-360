@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { BarChart3, ArrowLeft, TrendingUp, TrendingDown, Percent, Clock, BookOpen, Scale, CalendarDays, Tags, Target, Brain, AlertTriangle, Info, Trophy, Shield, Zap, Activity, PieChart, BarChart, LineChart } from 'lucide-react';
+import { BarChart3, ArrowLeft, TrendingUp, TrendingDown, Percent, Clock, BookOpen, Scale, CalendarDays, Tags, Target, Brain, AlertTriangle, Info, Trophy, Shield, Zap, Activity, PieChart, BarChart, LineChart, DollarSign } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, LineChart, Line, Cell, PieChart as RechartsPieChart, Pie, Area, AreaChart, ComposedChart, Scatter, ScatterChart } from 'recharts';
 import { Tables } from '@/integrations/supabase/types';
