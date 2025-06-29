@@ -5,9 +5,9 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { BarChart3, ArrowLeft, TrendingUp, TrendingDown, Percent, Clock, BookOpen, Scale, CalendarDays, Tags, Target, Brain, AlertTriangle, Info, Trophy, Shield, Zap, Activity, PieChart, BarChart as BarChartIcon, LineChart, DollarSign } from 'lucide-react';
+import { BarChart3 as BarChart3Icon, ArrowLeft, TrendingUp, TrendingDown, Percent, Clock, BookOpen, Scale, CalendarDays, Tags, Target, Brain, AlertTriangle, Info, Trophy, Shield, Zap, Activity, PieChart as PieChartIcon, BarChart as BarChartIcon, LineChart as LineChartIcon, DollarSign } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, LineChart as RechartsLineChart, Line, Cell, PieChart as RechartsPieChart, Pie, Area, AreaChart, ComposedChart, Scatter, ScatterChart } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, LineChart, Line, Cell, PieChart, Pie, Area, AreaChart, ComposedChart, Scatter, ScatterChart } from 'recharts';
 import { Tables } from '@/integrations/supabase/types';
 import TradesLogTable from './TradesLogTable';
 import { calculateMetrics } from "@/lib/trade-metrics";
@@ -268,7 +268,7 @@ const AnalysisView = ({ currentSession, onUploadNew }: AnalysisViewProps) => {
                 Back
               </Button>
               <div className="w-10 h-10 rounded-full bg-gradient-to-r from-green-500 to-green-600 flex items-center justify-center">
-                <BarChart3 className="w-6 h-6 text-white" />
+                <BarChart3Icon className="w-6 h-6 text-white" />
               </div>
               <div>
                 <h1 className="text-2xl font-bold text-slate-800">Comprehensive Trade Analysis</h1>
@@ -407,7 +407,7 @@ const AnalysisView = ({ currentSession, onUploadNew }: AnalysisViewProps) => {
               <Card className="border-0 shadow-lg">
                 <CardHeader>
                   <CardTitle className="flex items-center space-x-2">
-                    <LineChart className="w-5 h-5 text-green-600" />
+                    <LineChartIcon className="w-5 h-5 text-green-600" />
                     <span>Equity Curve</span>
                   </CardTitle>
                   <CardDescription>Your account balance over time - the holy grail of trading</CardDescription>
@@ -662,14 +662,14 @@ const AnalysisView = ({ currentSession, onUploadNew }: AnalysisViewProps) => {
               <Card className="border-0 shadow-lg">
                 <CardHeader>
                   <CardTitle className="flex items-center space-x-2">
-                    <PieChart className="w-5 h-5 text-blue-600" />
+                    <PieChartIcon className="w-5 h-5 text-blue-600" />
                     <span>Win/Loss Distribution</span>
                   </CardTitle>
                   <CardDescription>Visual breakdown of your trading outcomes</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <ResponsiveContainer width="100%" height={300}>
-                    <RechartsPieChart>
+                    <PieChart>
                       <Pie
                         data={[
                           { name: 'Winning Trades', value: currentSession.trades.filter(t => (t.pnl || 0) > 0).length, fill: '#10b981' },
@@ -683,7 +683,7 @@ const AnalysisView = ({ currentSession, onUploadNew }: AnalysisViewProps) => {
                         label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(1)}%`}
                       />
                       <RechartsTooltip />
-                    </RechartsPieChart>
+                    </PieChart>
                   </ResponsiveContainer>
                 </CardContent>
               </Card>

@@ -10,8 +10,9 @@ import { Card, CardContent, CardHeader, CardTitle, CardFooter, CardDescription }
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from '@/components/ui/use-toast';
+import { Badge } from '@/components/ui/badge';
 import { Tables, TablesInsert } from '@/integrations/supabase/types';
-import { PlusCircle, Trash2 } from 'lucide-react';
+import { PlusCircle, Trash2, Settings, BarChart3, ChevronRight, TrendingUp, ArrowUpRight } from 'lucide-react';
 
 type Journal = Tables<'journals'>;
 
@@ -21,17 +22,46 @@ const Journals = () => {
     const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
     const navigate = useNavigate();
 
-    const { data: journals, isLoading } = useQuery<Journal[]>({
+    const { data: journals, isLoading } = useQuery<(Journal & { summary?: any })[]>({
         queryKey: ['journals', user?.id],
         queryFn: async () => {
             if (!user) return [];
-            const { data, error } = await supabase
-                .from('journals')
-                .select('*')
-                .eq('user_id', user.id)
-                .order('created_at', { ascending: false });
-            if (error) throw error;
-            return data || [];
+            
+            try {
+                // First get all journals
+                const { data: journalsData, error } = await supabase
+                    .from('journals')
+                    .select('*')
+                    .eq('user_id', user.id)
+                    .order('created_at', { ascending: false });
+                
+                if (error) throw error;
+                
+                // For each journal, fetch a summary using our new function
+                const journalsWithSummary = await Promise.all(
+                    (journalsData || []).map(async (journal) => {
+                        try {
+                            const { data: summaryData, error: summaryError } = await supabase
+                                .rpc('get_journal_summary', { p_journal_id: journal.id });
+                            
+                            if (summaryError) {
+                                console.error('Error fetching journal summary:', summaryError);
+                                return { ...journal, summary: null };
+                            }
+                            
+                            return { ...journal, summary: summaryData };
+                        } catch (err) {
+                            console.error('Failed to fetch summary for journal:', journal.id, err);
+                            return { ...journal, summary: null };
+                        }
+                    })
+                );
+                
+                return journalsWithSummary || [];
+            } catch (err) {
+                console.error('Error fetching journals:', err);
+                throw err;
+            }
         },
         enabled: !!user,
     });
@@ -90,107 +120,196 @@ const Journals = () => {
     };
     
     return (
-        <div className="container mx-auto p-4 md:p-8">
-            <Card>
-                <CardHeader>
-                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                        <div>
-                            <CardTitle>My Journals</CardTitle>
-                            <CardDescription>Organize your trades by account, strategy, or prop firm.</CardDescription>
+        <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100">
+            <header className="border-b bg-white/80 backdrop-blur-sm sticky top-0 z-50">
+                <div className="container mx-auto px-4 py-4">
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-3">
+                            <div className="w-10 h-10 rounded-full bg-gradient-to-r from-blue-500 to-green-500 flex items-center justify-center">
+                                <BarChart3 className="w-6 h-6 text-white" />
+                            </div>
+                            <div>
+                                <h1 className="text-2xl font-bold text-slate-800">Trading Journals</h1>
+                                <p className="text-sm text-slate-600">Organize and analyze your trades</p>
+                            </div>
                         </div>
-                        <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-                            <DialogTrigger asChild>
-                                <Button>
-                                    <PlusCircle className="mr-2 h-4 w-4" /> Create New Journal
-                                </Button>
-                            </DialogTrigger>
-                            <DialogContent>
-                                <DialogHeader>
-                                    <DialogTitle>Create a New Journal</DialogTitle>
-                                </DialogHeader>
-                                <form onSubmit={handleCreateJournal} className="space-y-4">
-                                    <div>
-                                        <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-1">Journal Name</label>
-                                        <Input id="name" name="name" required placeholder="e.g. My Apex Account"/>
-                                    </div>
-                                    <div>
-                                        <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-                                        <Textarea id="description" name="description" placeholder="e.g. 50k Performance Account"/>
-                                    </div>
+                        <Button
+                            onClick={() => navigate('/dashboard')}
+                            variant="outline"
+                            className="border-slate-300"
+                        >
+                            Dashboard
+                        </Button>
+                    </div>
+                </div>
+            </header>
+            
+            <div className="container mx-auto p-4 md:p-8">
+                <div className="mb-6 flex justify-between items-center">
+                    <div>
+                        <h2 className="text-xl font-bold text-slate-800">My Journals</h2>
+                        <p className="text-slate-600">Organize your trades by account, strategy, or prop firm</p>
+                    </div>
+                    <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+                        <DialogTrigger asChild>
+                            <Button className="bg-gradient-to-r from-blue-600 to-green-500 hover:from-blue-700 hover:to-green-600">
+                                <PlusCircle className="mr-2 h-4 w-4" /> Create New Journal
+                            </Button>
+                        </DialogTrigger>
+                        <DialogContent className="sm:max-w-[525px]">
+                            <DialogHeader>
+                                <DialogTitle>Create a New Journal</DialogTitle>
+                                <DialogDescription>
+                                    Set up a new trading journal to track your performance.
+                                </DialogDescription>
+                            </DialogHeader>
+                            <form onSubmit={handleCreateJournal} className="space-y-4">
+                                <div>
+                                    <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-1">Journal Name*</label>
+                                    <Input id="name" name="name" required placeholder="e.g. Apex Trader 50K Challenge" className="bg-white"/>
+                                </div>
+                                <div>
+                                    <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                                    <Textarea id="description" name="description" placeholder="e.g. My prop firm account for futures trading" className="bg-white"/>
+                                </div>
+                                <div className="grid grid-cols-2 gap-4">
                                     <div>
                                         <label htmlFor="prop_firm" className="block text-sm font-medium text-gray-700 mb-1">Prop Firm</label>
-                                        <Input id="prop_firm" name="prop_firm" placeholder="e.g. Apex Trader Funding"/>
+                                        <Input id="prop_firm" name="prop_firm" placeholder="e.g. Apex Trader Funding" className="bg-white"/>
                                     </div>
                                     <div>
                                         <label htmlFor="account_size" className="block text-sm font-medium text-gray-700 mb-1">Account Size ($)</label>
-                                        <Input id="account_size" name="account_size" type="number" step="any" placeholder="e.g. 50000"/>
+                                        <Input id="account_size" name="account_size" type="number" step="any" placeholder="e.g. 50000" className="bg-white"/>
                                     </div>
-                                    <div>
-                                        <label htmlFor="broker" className="block text-sm font-medium text-gray-700 mb-1">Broker</label>
-                                        <Input id="broker" name="broker" placeholder="e.g. Tradovate"/>
-                                    </div>
-                                    <DialogFooter>
-                                        <Button type="submit" disabled={createJournalMutation.isPending}>
-                                            {createJournalMutation.isPending ? 'Creating...' : 'Create Journal'}
-                                        </Button>
-                                    </DialogFooter>
-                                </form>
-                            </DialogContent>
-                        </Dialog>
+                                </div>
+                                <div>
+                                    <label htmlFor="broker" className="block text-sm font-medium text-gray-700 mb-1">Broker</label>
+                                    <Input id="broker" name="broker" placeholder="e.g. Tradovate" className="bg-white"/>
+                                </div>
+                                <DialogFooter className="mt-6">
+                                    <Button type="button" variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
+                                        Cancel
+                                    </Button>
+                                    <Button type="submit" disabled={createJournalMutation.isPending} className="bg-gradient-to-r from-blue-600 to-green-500 hover:from-blue-700 hover:to-green-600">
+                                        {createJournalMutation.isPending ? 'Creating...' : 'Create Journal'}
+                                    </Button>
+                                </DialogFooter>
+                            </form>
+                        </DialogContent>
+                    </Dialog>
+                </div>
+                
+                {isLoading ? (
+                    <div className="grid grid-cols-1 gap-4 animate-pulse">
+                        {[1, 2, 3].map(i => (
+                            <div key={i} className="h-48 bg-slate-200 rounded-lg"></div>
+                        ))}
                     </div>
-                </CardHeader>
-                <CardContent>
-                    {isLoading ? (
-                        <p>Loading journals...</p>
-                    ) : journals && journals.length > 0 ? (
-                        <Table>
-                            <TableHeader>
-                                <TableRow>
-                                    <TableHead>Name</TableHead>
-                                    <TableHead>Prop Firm</TableHead>
-                                    <TableHead>Account Size</TableHead>
-                                    <TableHead>Broker</TableHead>
-                                    <TableHead className="text-right"></TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {journals.map((journal) => (
-                                    <TableRow 
-                                        key={journal.id} 
-                                        className="cursor-pointer hover:bg-slate-50"
+                ) : journals && journals.length > 0 ? (
+                    <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        {journals.map((journal) => (
+                            <Card key={journal.id} className="border-0 shadow-lg hover:shadow-xl transition-all duration-300">
+                                <CardHeader className="pb-2 border-b">
+                                    <div className="flex justify-between items-center">
+                                        <CardTitle className="text-lg font-bold text-slate-800">{journal.name}</CardTitle>
+                                        <Button 
+                                            variant="ghost" 
+                                            size="icon"
+                                            className="h-8 w-8"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                if (confirm("Are you sure you want to delete this journal? All associated sessions and trades will be permanently removed.")) {
+                                                    deleteJournalMutation.mutate(journal.id);
+                                                }
+                                            }}
+                                        >
+                                            <Trash2 className="h-4 w-4 text-slate-500" />
+                                        </Button>
+                                    </div>
+                                    <CardDescription className="line-clamp-1">
+                                        {journal.description || 'No description provided'}
+                                    </CardDescription>
+                                </CardHeader>
+                                <CardContent className="pt-4">
+                                    <div className="grid grid-cols-2 gap-4 mb-4">
+                                        <div>
+                                            <p className="text-xs text-slate-500">Prop Firm</p>
+                                            <p className="font-medium text-slate-700">{journal.prop_firm || 'N/A'}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-xs text-slate-500">Account Size</p>
+                                            <p className="font-medium text-slate-700">
+                                                {journal.account_size ? `$${journal.account_size.toLocaleString()}` : 'N/A'}
+                                            </p>
+                                        </div>
+                                        <div>
+                                            <p className="text-xs text-slate-500">Broker</p>
+                                            <p className="font-medium text-slate-700">{journal.broker || 'N/A'}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-xs text-slate-500">Created</p>
+                                            <p className="font-medium text-slate-700">
+                                                {new Date(journal.created_at).toLocaleDateString()}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    
+                                    {journal.summary && (
+                                        <div className="bg-slate-50 p-3 rounded-lg mb-4">
+                                            <div className="grid grid-cols-3 gap-2 text-center">
+                                                <div>
+                                                    <p className="text-xs text-slate-500">Total P&L</p>
+                                                    <p className={`text-sm font-semibold ${journal.summary.total_pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                                        {journal.summary.total_pnl >= 0 ? '+' : ''}{journal.summary.total_pnl?.toFixed(2)}
+                                                    </p>
+                                                </div>
+                                                <div>
+                                                    <p className="text-xs text-slate-500">Win Rate</p>
+                                                    <p className="text-sm font-semibold text-blue-600">{journal.summary.win_rate?.toFixed(1)}%</p>
+                                                </div>
+                                                <div>
+                                                    <p className="text-xs text-slate-500">Trades</p>
+                                                    <p className="text-sm font-semibold text-slate-700">{journal.summary.total_trades}</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+                                </CardContent>
+                                <CardFooter className="pt-0">
+                                    <Button 
                                         onClick={() => navigate(`/journals/${journal.id}`)}
+                                        className="w-full"
+                                        variant="outline"
                                     >
-                                        <TableCell className="font-medium">
-                                            {journal.name}
-                                        </TableCell>
-                                        <TableCell>{journal.prop_firm || '-'}</TableCell>
-                                        <TableCell>{journal.account_size ? `$${journal.account_size.toLocaleString()}`: '-'}</TableCell>
-                                        <TableCell>{journal.broker || '-'}</TableCell>
-                                        <TableCell className="text-right">
-                                            <Button 
-                                                variant="ghost" 
-                                                size="icon" 
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    deleteJournalMutation.mutate(journal.id)
-                                                }} 
-                                                disabled={deleteJournalMutation.isPending}
-                                            >
-                                                <Trash2 className="h-4 w-4" />
-                                            </Button>
-                                        </TableCell>
-                                    </TableRow>
-                                ))}
-                            </TableBody>
-                        </Table>
-                    ) : (
-                        <div className="text-center py-10 border-2 border-dashed rounded-lg">
-                            <h3 className="text-lg font-semibold">No Journals Yet</h3>
-                            <p className="text-muted-foreground mt-1">Get started by creating your first journal.</p>
-                        </div>
-                    )}
-                </CardContent>
-            </Card>
+                                        <span>View Journal</span>
+                                        <ChevronRight className="ml-2 h-4 w-4" />
+                                    </Button>
+                                </CardFooter>
+                            </Card>
+                        ))}
+                    </div>
+                ) : (
+                    <Card className="border-0 shadow-lg">
+                        <CardContent className="pt-6">
+                            <div className="text-center py-10">
+                                <div className="w-16 h-16 rounded-full bg-blue-100 mx-auto mb-4 flex items-center justify-center">
+                                    <BarChart3 className="h-8 w-8 text-blue-600" />
+                                </div>
+                                <h3 className="text-xl font-bold text-slate-800 mb-2">No Journals Yet</h3>
+                                <p className="text-slate-600 mb-6 max-w-md mx-auto">
+                                    Create your first journal to start tracking your trading performance across different accounts or strategies.
+                                </p>
+                                <Button 
+                                    onClick={() => setIsCreateDialogOpen(true)}
+                                    className="bg-gradient-to-r from-blue-600 to-green-500 hover:from-blue-700 hover:to-green-600"
+                                >
+                                    <PlusCircle className="mr-2 h-4 w-4" /> Create Your First Journal
+                                </Button>
+                            </div>
+                        </CardContent>
+                    </Card>
+                )}
+            </div>
         </div>
     );
 };
